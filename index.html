@@ -1,294 +1,405 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en-US">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Orthographic 3D Sierpinski (WebGPU)</title>
-    <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background-color: #000;
-        }
-        canvas {
-            display: block;
-            width: 100vw;
-            height: 100vh;
-            touch-action: none; /* Prevent scroll on mobile touch */
-        }
-        #error-msg {
-            display: none;
-            color: #ff5555;
-            font-family: sans-serif;
-            text-align: center;
-            margin-top: 20%;
-            padding: 20px;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    MathJax = {
+      tex: {
+        inlineMath: [['\\(', '\\)']]
+      },
+      svg: {
+        fontCache: 'global'
+      }
+    };
+
+    const fallback_url = "https://cdn.jsdelivr.net/npm/mathjax/es5/tex-svg.js"
+    function mathjax_fallback() {
+      const tag = document.getElementById("MathJax-script")
+      const before = tag.nextElementSibling
+      document.head.removeChild(tag)
+      const cdn = document.createElement("script")
+      cdn.setAttribute("type", "text/javascript")
+      cdn.setAttribute("id", "MathJax-script")
+      cdn.setAttribute("async", "")
+      document.head.insertBefore(cdn, before)
+      cdn.src = fallback_url
+    }
+  </script>
+  <script type="text/javascript" id="MathJax-script" onerror="mathjax_fallback()" async
+    src="mathjax/es5/tex-svg.js"></script>
 </head>
+
 <body>
-    <div id="error-msg">
+  <div class="content">
+    <div class="conjecture">
+      For the sequence
+      \begin{equation}
+      a_{k+1}=\begin{cases}
+      a_k/2 & \text{if } a_k \equiv 0 \pmod 2, \\
+      3a_k+1 & \text{if } a_k \equiv 1 \pmod 2.
+      \end{cases}
+      \end{equation}
+      The Collatz conjecture is:
+      \begin{equation}
+      \forall\,a_0\in\mathbb{N}+1=\{1,2,3,\dots\}\\\,\exists\,k\ \text{such that}\ a_k=1
+      \end{equation}
+    </div>
+    <hr>
+
+    I saw <a href="https://youtu.be/FnRhnZbDprE">this video</a> and thought of Collatz because the number of triangles in 2d Sierpinski is \(3n+1\) per iteration and the squares alignment makes me think of the division by 2.
+    <br /><br />
+    I also think I remember \(1.58\) as the limit of a convergence rate for number of digits or something along those lines. Regardless, the analogy stuck better than most things I compare to this problem, so here's an orthographic visualization.
+
+    <div class="figure-container" id="figureContainer">
+      <div id="error-msg">
         <h2>WebGPU is not supported by your browser.</h2>
         <p>Try opening this in a recent version of Chrome or Edge.</p>
+      </div>
+      <canvas id="gpuCanvas"></canvas>
+      <button id="fullscreenBtn">Full Screen</button>
     </div>
-    <canvas id="gpuCanvas"></canvas>
+  </div>
+  <style>
+    .content {
+      --max-width-em: 40;
+      max-width: calc(var(--max-width-em) * 1em);
+      margin-left: auto;
+      margin-right: auto;
+    }
 
-    <script type="module">
-        async function init() {
-            // Check for WebGPU support
-            if (!navigator.gpu) {
-                document.getElementById('error-msg').style.display = 'block';
-                document.getElementById('gpuCanvas').style.display = 'none';
-                return;
-            }
+    .conjecture {
+      text-align: center;
+    }
 
-            const canvas = document.getElementById('gpuCanvas');
-            const adapter = await navigator.gpu.requestAdapter();
-            if (!adapter) {
-                document.getElementById('error-msg').style.display = 'block';
-                return;
-            }
+    .figure-container {
+      position: relative;
+      width: 100%;
+      height: 400px;
+      background-color: #000;
+      margin-top: 20px;
+      border-radius: 8px;
+      overflow: hidden;
+    }
 
-            const device = await adapter.requestDevice();
-            const context = canvas.getContext('webgpu');
-            const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+    .figure-container:fullscreen {
+      border-radius: 0;
+    }
 
-            context.configure({
-                device,
-                format: presentationFormat,
-                alphaMode: 'premultiplied',
-            });
+    .figure-container canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
 
-            // --- WGSL SHADER SOURCE ---
-            const wgslSource = `
-                struct Uniforms {
-                    resolution: vec2<f32>,
-                    mouse: vec2<f32>,
-                }
+    #error-msg {
+      display: none;
+      color: #ff5555;
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
 
-                @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+    #fullscreenBtn {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      padding: 8px 12px;
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      z-index: 10;
+      font-family: sans-serif;
+    }
 
-                // Vertex Shader: Hardcoded full-screen quad
-                @vertex
-                fn vs_main(@builtin(vertex_index) VertexIndex : u32) -> @builtin(position) vec4<f32> {
-                    var pos = array<vec2<f32>, 6>(
-                        vec2<f32>(-1.0, -1.0),
-                        vec2<f32>( 1.0, -1.0),
-                        vec2<f32>(-1.0,  1.0),
-                        vec2<f32>( 1.0, -1.0),
-                        vec2<f32>( 1.0,  1.0),
-                        vec2<f32>(-1.0,  1.0)
-                    );
-                    return vec4<f32>(pos[VertexIndex], 0.0, 1.0);
-                }
+    #fullscreenBtn:hover {
+      background: rgba(255, 255, 255, 0.4);
+    }
+  </style>
 
-                // 2D Rotation Matrix
-                fn rot(a: f32) -> mat2x2<f32> {
-                    let s = sin(a);
-                    let c = cos(a);
-                    return mat2x2<f32>(c, -s, s, c);
-                }
+  <script type="module">
+    const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const figureContainer = document.getElementById('figureContainer');
 
-                // Sierpinski Tetrahedron Distance Estimator
-                fn sdSierpinski(p_in: vec3<f32>) -> f32 {
-                    var p = p_in;
+    fullscreenBtn.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        figureContainer.requestFullscreen().catch(err => {
+          console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    });
 
-                    // Mouse-based 3D Rotation
-                    let rotY = rot(uniforms.mouse.x * 6.28318); // Left-Right mouse movement
-                    let rotX = rot(uniforms.mouse.y * 6.28318); // Up-Down mouse movement
+    document.addEventListener('fullscreenchange', () => {
+      if (document.fullscreenElement) {
+        fullscreenBtn.textContent = 'Exit Full Screen';
+      } else {
+        fullscreenBtn.textContent = 'Full Screen';
+      }
+    });
 
-                    // Apply Y rotation (affects X and Z)
-                    let xz = rotY * vec2<f32>(p.x, p.z);
-                    p.x = xz.x;
-                    p.z = xz.y;
+    async function init() {
+      // Check for WebGPU support
+      if (!navigator.gpu) {
+        document.getElementById('error-msg').style.display = 'block';
+        document.getElementById('gpuCanvas').style.display = 'none';
+        return;
+      }
 
-                    // Apply X rotation (affects Y and Z)
-                    let yz = rotX * vec2<f32>(p.y, p.z);
-                    p.y = yz.x;
-                    p.z = yz.y;
+      const canvas = document.getElementById('gpuCanvas');
+      const adapter = await navigator.gpu.requestAdapter();
+      if (!adapter) {
+        document.getElementById('error-msg').style.display = 'block';
+        return;
+      }
 
-                    var scale: f32 = 1.0;
+      const device = await adapter.requestDevice();
+      const context = canvas.getContext('webgpu');
+      const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
-                    // Fold space 8 times to create the fractal
-                    for (var i = 0; i < 8; i++) {
-                        // Strict WGSL assignment avoiding complex left-hand swizzling
-                        if (p.x + p.y < 0.0) {
-                            let temp = -vec2<f32>(p.y, p.x);
-                            p.x = temp.x; p.y = temp.y;
-                        }
-                        if (p.x + p.z < 0.0) {
-                            let temp = -vec2<f32>(p.z, p.x);
-                            p.x = temp.x; p.z = temp.y;
-                        }
-                        if (p.y + p.z < 0.0) {
-                            let temp = -vec2<f32>(p.z, p.y);
-                            p.y = temp.x; p.z = temp.y;
-                        }
+      context.configure({
+        device,
+        format: presentationFormat,
+        alphaMode: 'premultiplied',
+      });
 
-                        // Scale and offset
-                        p = p * 2.0 - vec3<f32>(1.0, 1.0, 1.0);
-                        scale *= 2.0;
-                    }
+      // --- WGSL SHADER SOURCE ---
+      const wgslSource = `
+              struct Uniforms {
+                  resolution: vec2<f32>,
+                  mouse: vec2<f32>,
+              }
 
-                    // Return distance to the base tetrahedron, adjusted by scale
-                    return (length(p) - 1.0) / scale;
-                }
+              @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
-                // Calculate normals for lighting based on SDF gradient
-                fn calcNormal(p: vec3<f32>) -> vec3<f32> {
-                    let e = vec2<f32>(0.001, 0.0);
-                    let nx = sdSierpinski(p + vec3<f32>(e.x, e.y, e.y)) - sdSierpinski(p - vec3<f32>(e.x, e.y, e.y));
-                    let ny = sdSierpinski(p + vec3<f32>(e.y, e.x, e.y)) - sdSierpinski(p - vec3<f32>(e.y, e.x, e.y));
-                    let nz = sdSierpinski(p + vec3<f32>(e.y, e.y, e.x)) - sdSierpinski(p - vec3<f32>(e.y, e.y, e.x));
-                    return normalize(vec3<f32>(nx, ny, nz));
-                }
+              // Vertex Shader: Hardcoded full-screen quad
+              @vertex
+              fn vs_main(@builtin(vertex_index) VertexIndex : u32) -> @builtin(position) vec4<f32> {
+                  var pos = array<vec2<f32>, 6>(
+                      vec2<f32>(-1.0, -1.0),
+                      vec2<f32>( 1.0, -1.0),
+                      vec2<f32>(-1.0,  1.0),
+                      vec2<f32>( 1.0, -1.0),
+                      vec2<f32>( 1.0,  1.0),
+                      vec2<f32>(-1.0,  1.0)
+                  );
+                  return vec4<f32>(pos[VertexIndex], 0.0, 1.0);
+              }
 
-                @fragment
-                fn fs_main(@builtin(position) coord: vec4<f32>) -> @location(0) vec4<f32> {
-                    // Normalize pixel coordinates (from -1 to 1)
-                    let uv = (coord.xy - 0.5 * uniforms.resolution.xy) / uniforms.resolution.y;
+              // 2D Rotation Matrix
+              fn rot(a: f32) -> mat2x2<f32> {
+                  let s = sin(a);
+                  let c = cos(a);
+                  return mat2x2<f32>(c, -s, s, c);
+              }
 
-                    // ORTHOGRAPHIC CAMERA SETUP
-                    let orthoSize: f32 = 2.5;
-                    let ro = vec3<f32>(uv * orthoSize, -3.0);
-                    let rd = vec3<f32>(0.0, 0.0, 1.0);
+              // Sierpinski Tetrahedron Distance Estimator
+              fn sdSierpinski(p_in: vec3<f32>) -> f32 {
+                  var p = p_in;
 
-                    // Raymarching Loop
-                    var t: f32 = 0.0;
-                    var d: f32 = 0.0;
-                    for(var i = 0; i < 100; i++) {
-                        let p = ro + rd * t;
-                        d = sdSierpinski(p);
-                        if(d < 0.001 || t > 10.0) { break; }
-                        t += d;
-                    }
+                  // Mouse-based 3D Rotation
+                  let rotY = rot(uniforms.mouse.x * 6.28318); // Left-Right mouse movement
+                  let rotX = rot(uniforms.mouse.y * 6.28318); // Up-Down mouse movement
 
-                    // Shading and Coloring
-                    var color = vec3<f32>(0.05, 0.05, 0.08); // Background color
+                  // Apply Y rotation (affects X and Z)
+                  let xz = rotY * vec2<f32>(p.x, p.z);
+                  p.x = xz.x;
+                  p.z = xz.y;
 
-                    if(t < 10.0) { // If we hit the fractal
-                        let p = ro + rd * t;
-                        let n = calcNormal(p);
+                  // Apply X rotation (affects Y and Z)
+                  let yz = rotX * vec2<f32>(p.y, p.z);
+                  p.y = yz.x;
+                  p.z = yz.y;
 
-                        // Simple directional lighting
-                        let lightDir = normalize(vec3<f32>(1.0, 1.0, -1.0));
-                        let diff = max(dot(n, lightDir), 0.0);
+                  var scale: f32 = 1.0;
 
-                        // Ambient occlusion based on iteration count / distance
-                        let ao = clamp(1.0 - t * 0.15, 0.0, 1.0);
+                  // Fold space 8 times to create the fractal
+                  for (var i = 0; i < 8; i++) {
+                      // Strict WGSL assignment avoiding complex left-hand swizzling
+                      if (p.x + p.y < 0.0) {
+                          let temp = -vec2<f32>(p.y, p.x);
+                          p.x = temp.x; p.y = temp.y;
+                      }
+                      if (p.x + p.z < 0.0) {
+                          let temp = -vec2<f32>(p.z, p.x);
+                          p.x = temp.x; p.z = temp.y;
+                      }
+                      if (p.y + p.z < 0.0) {
+                          let temp = -vec2<f32>(p.z, p.y);
+                          p.y = temp.x; p.z = temp.y;
+                      }
 
-                        // Base color mixed with lighting
-                        let baseColor = vec3<f32>(0.9, 0.6, 0.3); // Copper/orange tone
-                        color = baseColor * diff * ao + (baseColor * 0.2); // Add ambient light
-                    }
+                      // Scale and offset
+                      p = p * 2.0 - vec3<f32>(1.0, 1.0, 1.0);
+                      scale *= 2.0;
+                  }
 
-                    return vec4<f32>(color, 1.0);
-                }
-            `;
+                  // Return distance to the base tetrahedron, adjusted by scale
+                  return (length(p) - 1.0) / scale;
+              }
 
-            // --- WEBGPU BOILERPLATE & PIPELINE ---
-            const shaderModule = device.createShaderModule({ code: wgslSource });
+              // Calculate normals for lighting based on SDF gradient
+              fn calcNormal(p: vec3<f32>) -> vec3<f32> {
+                  let e = vec2<f32>(0.001, 0.0);
+                  let nx = sdSierpinski(p + vec3<f32>(e.x, e.y, e.y)) - sdSierpinski(p - vec3<f32>(e.x, e.y, e.y));
+                  let ny = sdSierpinski(p + vec3<f32>(e.y, e.x, e.y)) - sdSierpinski(p - vec3<f32>(e.y, e.x, e.y));
+                  let nz = sdSierpinski(p + vec3<f32>(e.y, e.y, e.x)) - sdSierpinski(p - vec3<f32>(e.y, e.y, e.x));
+                  return normalize(vec3<f32>(nx, ny, nz));
+              }
 
-            const pipeline = device.createRenderPipeline({
-                layout: 'auto',
-                vertex: {
-                    module: shaderModule,
-                    entryPoint: 'vs_main',
-                },
-                fragment: {
-                    module: shaderModule,
-                    entryPoint: 'fs_main',
-                    targets: [{ format: presentationFormat }],
-                },
-                primitive: {
-                    topology: 'triangle-list',
-                },
-            });
+              @fragment
+              fn fs_main(@builtin(position) coord: vec4<f32>) -> @location(0) vec4<f32> {
+                  // Normalize pixel coordinates (from -1 to 1)
+                  let uv = (coord.xy - 0.5 * uniforms.resolution.xy) / uniforms.resolution.y;
 
-            // Uniform Buffer (2 vec2s = 4 floats = 16 bytes)
-            const uniformBuffer = device.createBuffer({
-                size: 16,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            });
+                  // ORTHOGRAPHIC CAMERA SETUP
+                  let orthoSize: f32 = 2.5;
+                  let ro = vec3<f32>(uv * orthoSize, -3.0);
+                  let rd = vec3<f32>(0.0, 0.0, 1.0);
 
-            const bindGroup = device.createBindGroup({
-                layout: pipeline.getBindGroupLayout(0),
-                entries: [{
-                    binding: 0,
-                    resource: { buffer: uniformBuffer }
-                }]
-            });
+                  // Raymarching Loop
+                  var t: f32 = 0.0;
+                  var d: f32 = 0.0;
+                  for(var i = 0; i < 100; i++) {
+                      let p = ro + rd * t;
+                      d = sdSierpinski(p);
+                      if(d < 0.001 || t > 10.0) { break; }
+                      t += d;
+                  }
 
-            // Data array to send to the GPU
-            const uniformData = new Float32Array(4);
+                  // Shading and Coloring
+                  var color = vec3<f32>(0.05, 0.05, 0.08); // Background color
 
-            // --- INPUT HANDLING ---
-            let mouseX = 0.1; // Default rotation
-            let mouseY = 0.05;
+                  if(t < 10.0) { // If we hit the fractal
+                      let p = ro + rd * t;
+                      let n = calcNormal(p);
 
-            function updateMouse(x, y) {
-                // Normalize to [0.0, 1.0]
-                mouseX = x / canvas.clientWidth;
-                mouseY = y / canvas.clientHeight;
-            }
+                      // Simple directional lighting
+                      let lightDir = normalize(vec3<f32>(1.0, 1.0, -1.0));
+                      let diff = max(dot(n, lightDir), 0.0);
 
-            window.addEventListener('mousemove', (e) => updateMouse(e.clientX, e.clientY));
-            window.addEventListener('touchmove', (e) => {
-                if(e.touches.length > 0) {
-                    updateMouse(e.touches[0].clientX, e.touches[0].clientY);
-                }
-            });
+                      // Ambient occlusion based on iteration count / distance
+                      let ao = clamp(1.0 - t * 0.15, 0.0, 1.0);
 
-            // --- RENDER LOOP ---
-            function render() {
-                // Handle canvas resize
-                const displayWidth = canvas.clientWidth;
-                const displayHeight = canvas.clientHeight;
-                if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
-                    canvas.width = displayWidth;
-                    canvas.height = displayHeight;
-                }
+                      // Base color mixed with lighting
+                      let baseColor = vec3<f32>(0.9, 0.6, 0.3); // Copper/orange tone
+                      color = baseColor * diff * ao + (baseColor * 0.2); // Add ambient light
+                  }
 
-                // Update uniform data
-                uniformData[0] = canvas.width;
-                uniformData[1] = canvas.height;
-                uniformData[2] = mouseX;
-                uniformData[3] = mouseY;
+                  return vec4<f32>(color, 1.0);
+              }
+          `;
 
-                // Write uniforms to GPU
-                device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+      // --- WEBGPU BOILERPLATE & PIPELINE ---
+      const shaderModule = device.createShaderModule({ code: wgslSource });
 
-                // Setup rendering commands
-                const commandEncoder = device.createCommandEncoder();
-                const textureView = context.getCurrentTexture().createView();
+      const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+          module: shaderModule,
+          entryPoint: 'vs_main',
+        },
+        fragment: {
+          module: shaderModule,
+          entryPoint: 'fs_main',
+          targets: [{ format: presentationFormat }],
+        },
+        primitive: {
+          topology: 'triangle-list',
+        },
+      });
 
-                const renderPassDescriptor = {
-                    colorAttachments: [{
-                        view: textureView,
-                        clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
-                        loadOp: 'clear',
-                        storeOp: 'store',
-                    }],
-                };
+      // Uniform Buffer (2 vec2s = 4 floats = 16 bytes)
+      const uniformBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
 
-                const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-                passEncoder.setPipeline(pipeline);
-                passEncoder.setBindGroup(0, bindGroup);
-                passEncoder.draw(6, 1, 0, 0); // Draw 6 vertices (our quad)
-                passEncoder.end();
+      const bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [{
+          binding: 0,
+          resource: { buffer: uniformBuffer }
+        }]
+      });
 
-                device.queue.submit([commandEncoder.finish()]);
+      // Data array to send to the GPU
+      const uniformData = new Float32Array(4);
 
-                requestAnimationFrame(render);
-            }
+      // --- INPUT HANDLING ---
+      let mouseX = 0.1; // Default rotation
+      let mouseY = 0.05;
 
-            requestAnimationFrame(render);
+      function updateMouse(x, y) {
+        // Normalize to [0.0, 1.0]
+        mouseX = x / canvas.clientWidth;
+        mouseY = y / canvas.clientHeight;
+      }
+
+      canvas.addEventListener('mousemove', (e) => {
+        updateMouse(e.offsetX, e.offsetY);
+      });
+
+      canvas.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 0) {
+          const rect = canvas.getBoundingClientRect();
+          updateMouse(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top);
+        }
+      });
+
+      // --- RENDER LOOP ---
+      function render() {
+        // Handle canvas resize
+        const displayWidth = canvas.clientWidth;
+        const displayHeight = canvas.clientHeight;
+        if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+          canvas.width = displayWidth;
+          canvas.height = displayHeight;
         }
 
-        init();
-    </script>
+        // Update uniform data
+        uniformData[0] = canvas.width;
+        uniformData[1] = canvas.height;
+        uniformData[2] = mouseX;
+        uniformData[3] = mouseY;
+
+        // Write uniforms to GPU
+        device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+
+        // Setup rendering commands
+        const commandEncoder = device.createCommandEncoder();
+        const textureView = context.getCurrentTexture().createView();
+
+        const renderPassDescriptor = {
+          colorAttachments: [{
+            view: textureView,
+            clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+        };
+
+        const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
+        passEncoder.setPipeline(pipeline);
+        passEncoder.setBindGroup(0, bindGroup);
+        passEncoder.draw(6, 1, 0, 0); // Draw 6 vertices (our quad)
+        passEncoder.end();
+
+        device.queue.submit([commandEncoder.finish()]);
+
+        requestAnimationFrame(render);
+      }
+
+      requestAnimationFrame(render);
+    }
+
+    init();
+  </script>
 </body>
+
 </html>
