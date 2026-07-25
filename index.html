@@ -647,12 +647,7 @@
       canvas.addEventListener('pointerup', stopDrag);
       canvas.addEventListener('pointercancel', stopDrag);
 
-      // Mouse Wheel Zoom
-      canvas.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const factor = e.deltaY > 0 ? 1.08 : 0.92;
-        targetZoom = Math.min(Math.max(targetZoom * factor, 0.5), 10.0);
-      }, { passive: false });
+
 
       // Touch Pinch-to-Zoom
       canvas.addEventListener('touchstart', (e) => {
