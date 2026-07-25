@@ -53,6 +53,7 @@
     I also think I remember \(1.58\) as the limit of a convergence rate for number of digits or something along those lines. Regardless, the analogy stuck better than most things I compare to this problem, so here's an orthographic visualization.
 
     <div class="figure-container" id="figureContainer">
+      <div class="fullscreen-backdrop"></div>
       <div id="error-msg">
         <h2>WebGPU is not supported by your browser.</h2>
         <p>Try opening this in a recent version of Chrome or Edge.</p>
@@ -109,9 +110,25 @@
       z-index: 99999;
     }
 
-    body.is-fullscreen-active {
-      overflow: hidden;
+    .fullscreen-backdrop {
+      display: none;
+      pointer-events: none;
+    }
+
+    .figure-container:fullscreen .fullscreen-backdrop,
+    .figure-container.is-fullscreen .fullscreen-backdrop {
+      display: block;
+      position: absolute;
+      top: -200px;
+      bottom: -200px;
+      left: -200px;
+      right: -200px;
+      top: calc(-200px - env(safe-area-inset-top, 0px));
+      bottom: calc(-200px - env(safe-area-inset-bottom, 0px));
+      left: calc(-200px - env(safe-area-inset-left, 0px));
+      right: calc(-200px - env(safe-area-inset-right, 0px));
       background-color: #f6f8fa;
+      z-index: -1;
     }
 
     .figure-container:fullscreen::backdrop,
@@ -195,10 +212,6 @@
     }
 
     @media (prefers-color-scheme: dark) {
-      body.is-fullscreen-active {
-        background-color: #0d1117;
-      }
-
       .figure-container {
         background-color: #0d1117;
         border-color: rgba(255, 255, 255, 0.15);
@@ -209,6 +222,11 @@
       .figure-container.is-fullscreen,
       .figure-container:fullscreen::backdrop,
       .figure-container.is-fullscreen::backdrop {
+        background-color: #0d1117;
+      }
+
+      .figure-container:fullscreen .fullscreen-backdrop,
+      .figure-container.is-fullscreen .fullscreen-backdrop {
         background-color: #0d1117;
       }
 
@@ -251,9 +269,7 @@
     }
 
     function updateFullscreenBtn() {
-      const active = isFS();
-      fullscreenBtn.textContent = active ? 'Exit Full Screen' : 'Full Screen';
-      document.body.classList.toggle('is-fullscreen-active', active);
+      fullscreenBtn.textContent = isFS() ? 'Exit Full Screen' : 'Full Screen';
     }
 
     fullscreenBtn.addEventListener('click', () => {
