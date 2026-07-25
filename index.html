@@ -48,9 +48,12 @@
     </div>
     <hr>
 
-    I saw <a href="https://youtu.be/FnRhnZbDprE">this video</a> and thought of Collatz because the number of triangles in 2d Sierpinski is \(3n+1\) per iteration and the squares alignment makes me think of the division by 2.
+    I saw <a href="https://youtu.be/FnRhnZbDprE">this video</a> and thought of Collatz because the number of triangles
+    in 2d Sierpinski is \(3n+1\) per iteration and the squares alignment makes me think of the division by 2.
     <br /><br />
-    I also think I remember \(1.58\) as the limit of a convergence rate for number of digits or something along those lines. Regardless, the analogy stuck better than most things I compare to this problem, so here's an orthographic visualization.
+    I also think I remember \(1.58\) as the limit of a convergence rate for number of digits or something along those
+    lines. Regardless, the analogy stuck better than most things I compare to this problem, so here's an orthographic
+    visualization.
 
     <div class="figure-container" id="figureContainer">
       <div class="fullscreen-backdrop"></div>
@@ -108,6 +111,7 @@
       border: none;
       background-color: #f6f8fa;
       z-index: 99999;
+      overflow: visible
     }
 
     .fullscreen-backdrop {
@@ -141,7 +145,10 @@
     }
 
     /* Heuristic targeting for AR / Spatial fullscreen devices */
-    @media (transparent-viewport: enabled), (display-mode: xr), (display-mode: immersive) {
+    @media (transparent-viewport: enabled),
+    (display-mode: xr),
+    (display-mode: immersive) {
+
       .figure-container:fullscreen,
       .figure-container.is-fullscreen,
       .figure-container:fullscreen::backdrop,
@@ -275,7 +282,7 @@
     fullscreenBtn.addEventListener('click', () => {
       if (isFS()) {
         if (document.exitFullscreen) {
-          document.exitFullscreen().catch(() => {});
+          document.exitFullscreen().catch(() => { });
         } else if (document.webkitExitFullscreen) {
           document.webkitExitFullscreen();
         }
@@ -568,7 +575,7 @@
       `;
 
       const wireframeShader = device.createShaderModule({ code: wireframeWgsl });
-      
+
       const wireframePipeline = device.createRenderPipeline({
         layout: 'auto',
         vertex: {
@@ -586,7 +593,7 @@
         fragment: {
           module: wireframeShader,
           entryPoint: 'fs_main',
-          targets: [{ 
+          targets: [{
             format: presentationFormat,
             blend: {
               color: {
@@ -617,31 +624,31 @@
           addLine(v0, v3); addLine(v1, v3); addLine(v2, v3);
           return;
         }
-        const m01 = [(v0[0]+v1[0])/2, (v0[1]+v1[1])/2, (v0[2]+v1[2])/2];
-        const m02 = [(v0[0]+v2[0])/2, (v0[1]+v2[1])/2, (v0[2]+v2[2])/2];
-        const m03 = [(v0[0]+v3[0])/2, (v0[1]+v3[1])/2, (v0[2]+v3[2])/2];
-        const m12 = [(v1[0]+v2[0])/2, (v1[1]+v2[1])/2, (v1[2]+v2[2])/2];
-        const m13 = [(v1[0]+v3[0])/2, (v1[1]+v3[1])/2, (v1[2]+v3[2])/2];
-        const m23 = [(v2[0]+v3[0])/2, (v2[1]+v3[1])/2, (v2[2]+v3[2])/2];
+        const m01 = [(v0[0] + v1[0]) / 2, (v0[1] + v1[1]) / 2, (v0[2] + v1[2]) / 2];
+        const m02 = [(v0[0] + v2[0]) / 2, (v0[1] + v2[1]) / 2, (v0[2] + v2[2]) / 2];
+        const m03 = [(v0[0] + v3[0]) / 2, (v0[1] + v3[1]) / 2, (v0[2] + v3[2]) / 2];
+        const m12 = [(v1[0] + v2[0]) / 2, (v1[1] + v2[1]) / 2, (v1[2] + v2[2]) / 2];
+        const m13 = [(v1[0] + v3[0]) / 2, (v1[1] + v3[1]) / 2, (v1[2] + v3[2]) / 2];
+        const m23 = [(v2[0] + v3[0]) / 2, (v2[1] + v3[1]) / 2, (v2[2] + v3[2]) / 2];
 
         genSierpinski(v0, m01, m02, m03, depth - 1);
         genSierpinski(m01, v1, m12, m13, depth - 1);
         genSierpinski(m02, m12, v2, m23, depth - 1);
         genSierpinski(m03, m13, m23, v3, depth - 1);
       }
-      
+
       const p0 = [1, 1, 1];
       const p1 = [-1, -1, 1];
       const p2 = [1, -1, -1];
       const p3 = [-1, 1, -1];
       genSierpinski(p0, p1, p2, p3, isMobile ? 4 : 6);
-      
+
       const vertexBuffer = device.createBuffer({
         size: linesData.length * 4,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
       device.queue.writeBuffer(vertexBuffer, 0, new Float32Array(linesData));
-      
+
       const wireframeBindGroup = device.createBindGroup({
         layout: wireframePipeline.getBindGroupLayout(0),
         entries: [{
@@ -704,7 +711,7 @@
         lastPointerY = e.clientY;
         velX = 0;
         velY = 0;
-        try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) { }
       });
 
       canvas.addEventListener('pointermove', (e) => {
@@ -732,7 +739,7 @@
       const stopDrag = (e) => {
         if (isDragging) {
           isDragging = false;
-          try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+          try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
         }
       };
 
@@ -794,12 +801,12 @@
           scrollProgress = (window.scrollY - scrollStart) / scrollRange;
         }
         scrollProgress = Math.max(0, Math.min(1, scrollProgress));
-        
+
         const p_eased = scrollProgress * scrollProgress * (3 - 2 * scrollProgress);
 
         // theta = 45 degrees (Triangle View)
-        const theta_start = Math.PI / 4; 
-        
+        const theta_start = Math.PI / 4;
+
         // theta = 90 degrees (Square View)
         const theta_end = Math.PI / 2;
 
@@ -828,9 +835,9 @@
 
         if (hasBeenDragged && !isHovering && !isDragging && !isFS()) {
           const rotNearZero = Math.abs(currentDragRotX) < 0.001 &&
-                              Math.abs(currentDragRotY) < 0.001 &&
-                              Math.abs(targetDragRotX) < 0.001 &&
-                              Math.abs(targetDragRotY) < 0.001;
+            Math.abs(currentDragRotY) < 0.001 &&
+            Math.abs(targetDragRotX) < 0.001 &&
+            Math.abs(targetDragRotY) < 0.001;
           const thetaNearScroll = Math.abs(currentTheta - scrollTheta) < 0.001;
           if (rotNearZero && thetaNearScroll) {
             hasBeenDragged = false;
