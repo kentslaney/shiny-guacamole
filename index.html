@@ -60,6 +60,7 @@
       <canvas id="gpuCanvas"></canvas>
       <button id="fullscreenBtn">Full Screen</button>
     </div>
+    <div class="scroll-padding"></div>
   </div>
   <style>
     .content {
@@ -96,6 +97,10 @@
 
     .figure-container:fullscreen::backdrop {
       background-color: #f6f8fa;
+    }
+
+    .scroll-padding {
+      height: 100vh;
     }
 
     /* Heuristic targeting for AR / Spatial fullscreen devices */
@@ -229,6 +234,7 @@
                   rotation: vec2<f32>,
                   zoom: f32,
                   isDarkMode: f32,
+                  roll: f32,
               }
 
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -254,23 +260,39 @@
                   return mat2x2<f32>(c, -s, s, c);
               }
 
+              // Inverse alignment transform: maps printer-aligned space (+Y up, flat base on XZ) to native fold space
+              fn printerToNative(p: vec3<f32>) -> vec3<f32> {
+                  let invSqrt2 = 0.70710678; // 1 / sqrt(2)
+                  let invSqrt3 = 0.57735027; // 1 / sqrt(3)
+                  let invSqrt6 = 0.40824829; // 1 / sqrt(6)
+
+                  let nx = invSqrt2 * p.x + invSqrt3 * p.y - invSqrt6 * p.z;
+                  let ny = -invSqrt2 * p.x + invSqrt3 * p.y - invSqrt6 * p.z;
+                  let nz = invSqrt3 * p.y + 2.0 * invSqrt6 * p.z;
+
+                  return vec3<f32>(nx, ny, nz);
+              }
+
               // Sierpinski Tetrahedron Distance Estimator
               fn sdSierpinski(p_in: vec3<f32>) -> f32 {
                   var p = p_in;
 
-                  // 3D Orbit Rotation
-                  let rotY = rot(uniforms.rotation.y); // Yaw (Left-Right)
-                  let rotX = rot(uniforms.rotation.x); // Pitch (Up-Down)
+                  // 3D Turntable Camera Orbit
+                  let rotY = rot(uniforms.rotation.y); // Yaw (turntable spin around Y axis)
+                  let rotX = rot(uniforms.rotation.x); // Pitch (tilt view around X axis)
 
-                  // Apply Y rotation (affects X and Z)
+                  // Apply pitch tilt first (world X axis)
+                  let yz = rotX * vec2<f32>(p.y, p.z);
+                  p.y = yz.x;
+                  p.z = yz.y;
+
+                  // Apply turntable yaw spin second (world Y axis)
                   let xz = rotY * vec2<f32>(p.x, p.z);
                   p.x = xz.x;
                   p.z = xz.y;
 
-                  // Apply X rotation (affects Y and Z)
-                  let yz = rotX * vec2<f32>(p.y, p.z);
-                  p.y = yz.x;
-                  p.z = yz.y;
+                  // Transform from printer space (+Y up, build plate on XZ) to native fold space
+                  p = printerToNative(p);
 
                   var scale: f32 = 1.0;
 
@@ -313,7 +335,8 @@
               fn fs_main(@builtin(position) coord: vec4<f32>) -> @location(0) vec4<f32> {
                   // Normalize pixel coordinates to fit the shortest dimension
                   let min_res = min(uniforms.resolution.x, uniforms.resolution.y);
-                  let uv = (coord.xy - 0.5 * uniforms.resolution.xy) / min_res;
+                  var uv = (coord.xy - 0.5 * uniforms.resolution.xy) / min_res;
+                  uv = rot(uniforms.roll) * uv;
 
                   // ORTHOGRAPHIC CAMERA SETUP
                   let orthoSize: f32 = uniforms.zoom;
@@ -405,11 +428,13 @@
       // Data array to send to the GPU (8 floats = 32 bytes)
       const uniformData = new Float32Array(8);
 
-      // --- INTERACTIVE CONTROLS (Arcball Drag Orbit, Momentum & Zoom) ---
-      let targetRotX = 0.3;  // Pitch (radians)
-      let targetRotY = 0.6;  // Yaw (radians)
-      let currentRotX = 0.3;
-      let currentRotY = 0.6;
+      // --- INTERACTIVE CONTROLS (Turntable Drag Orbit & Pitch Clamping) ---
+      let targetRotX = 0.35; // Pitch (elevated 3D view looking down at build plate)
+      let targetRotY = 0.5;  // Yaw (3/4 turntable angle)
+      let targetRoll = 0;
+      let currentRotX = 0.35;
+      let currentRotY = 0.5;
+      let currentRoll = 0;
 
       let velX = 0;
       let velY = 0; // No rotation without user input
@@ -424,6 +449,13 @@
       let lastPointerY = 0;
       let initialPinchDist = null;
       let initialPinchZoom = 3.6;
+
+      let isHovering = false;
+      canvas.addEventListener('pointerenter', () => { isHovering = true; });
+      canvas.addEventListener('pointerleave', (e) => {
+        isHovering = false;
+        stopDrag(e);
+      });
 
       // Dark mode listener for prefers-color-scheme
       const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -453,7 +485,8 @@
         velX = dy * sensitivity;
 
         targetRotY += velY;
-        targetRotX += velX;
+        // Clamp pitch so camera doesn't flip upside-down past poles
+        targetRotX = Math.min(Math.max(targetRotX + velX, -Math.PI / 2), Math.PI / 2);
       });
 
       const stopDrag = (e) => {
@@ -512,10 +545,46 @@
           canvas.height = displayHeight;
         }
 
+        // --- Scroll-based Auto Rotation ---
+        const rect = figureContainer.getBoundingClientRect();
+        const absoluteTop = rect.top + window.scrollY;
+        const scrollStart = absoluteTop + rect.height - window.innerHeight;
+        const scrollEnd = absoluteTop;
+
+        let scrollProgress = 0;
+        const scrollRange = scrollEnd - scrollStart;
+        if (scrollRange > 0) {
+          scrollProgress = (window.scrollY - scrollStart) / scrollRange;
+        }
+        scrollProgress = Math.max(0, Math.min(1, scrollProgress));
+        
+        const p_eased = scrollProgress * scrollProgress * (3 - 2 * scrollProgress);
+
+        const stateA_rotX = Math.PI / 2;
+        const stateA_rotY = 0;
+        const stateA_roll = 0;
+
+        const stateB_rotX = Math.asin(1 / Math.sqrt(3));
+        const stateB_rotY = 0; // Removed yaw spin so the tip moves straight to the corner
+        const stateB_roll = Math.PI / 4; // 45 degree roll to align the square
+
+        const autoRotX = stateA_rotX + (stateB_rotX - stateA_rotX) * p_eased;
+        const autoRotY = stateA_rotY + (stateB_rotY - stateA_rotY) * p_eased;
+        const autoRoll = stateA_roll + (stateB_roll - stateA_roll) * p_eased;
+
+        if (!isDragging && !isHovering) {
+          targetRotX += (autoRotX - targetRotX) * 0.05;
+          let diffY = (autoRotY - targetRotY) % (Math.PI * 2);
+          if (diffY > Math.PI) diffY -= Math.PI * 2;
+          if (diffY < -Math.PI) diffY += Math.PI * 2;
+          targetRotY += diffY * 0.05;
+          targetRoll += (autoRoll - targetRoll) * 0.05;
+        }
+
         // Momentum physics & smooth interpolation
         if (!isDragging) {
           targetRotY += velY;
-          targetRotX += velX;
+          targetRotX = Math.min(Math.max(targetRotX + velX, -Math.PI / 2), Math.PI / 2);
           velY *= 0.94; // Decay velocity gradually
           velX *= 0.94;
         }
@@ -524,6 +593,7 @@
         currentRotX += (targetRotX - currentRotX) * 0.1;
         currentRotY += (targetRotY - currentRotY) * 0.1;
         currentZoom += (targetZoom - currentZoom) * 0.1;
+        currentRoll += (targetRoll - currentRoll) * 0.1;
 
         // Update uniform data
         uniformData[0] = canvas.width;
@@ -532,6 +602,7 @@
         uniformData[3] = currentRotY;
         uniformData[4] = currentZoom;
         uniformData[5] = isDarkMode;
+        uniformData[6] = currentRoll;
 
         // Write uniforms to GPU
         device.queue.writeBuffer(uniformBuffer, 0, uniformData);
