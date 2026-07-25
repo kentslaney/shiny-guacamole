@@ -849,6 +849,66 @@
           targetDragRotX = Math.min(Math.max(targetDragRotX + velX, -Math.PI / 2), Math.PI / 2);
           velY *= 0.94;
           velX *= 0.94;
+
+          // Dynamic rotation snap positions for highly symmetrical fractal views
+          if (Math.abs(velX) < 0.005 && Math.abs(velY) < 0.005) {
+            // Include all 26 symmetrical orientations of a regular tetrahedron
+            const vTargets = [
+              // 4 Vertex Views (silhouette: equilateral triangle pointing outward)
+              [-1, -1, -1], [1, 1, -1], [-1, 1, 1], [1, -1, 1],
+              // 4 Face Views (silhouette: equilateral triangle flat center)
+              [1, 1, 1], [-1, -1, 1], [1, -1, -1], [-1, 1, -1],
+              // 6 Square Views (looking perpendicular to an edge midpoint)
+              [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+              // 12 Isosceles Views (looking parallel to an edge, includes default viewport)
+              [1, 1, 0], [1, -1, 0], [-1, 1, 0], [-1, -1, 0],
+              [1, 0, 1], [1, 0, -1], [-1, 0, 1], [-1, 0, -1],
+              [0, 1, 1], [0, 1, -1], [0, -1, 1], [0, -1, -1]
+            ];
+
+            let bestDist = Infinity;
+            let bestSnapX = targetDragRotX;
+            let bestSnapY = targetDragRotY;
+
+            let ct = Math.cos(currentTheta);
+            let st = Math.sin(currentTheta);
+
+            for (let v of vTargets) {
+              // Normalize the target direction
+              let mag = Math.hypot(v[0], v[1], v[2]);
+              let vx = v[0] / mag;
+              let vy = v[1] / mag;
+              let vz = v[2] / mag;
+
+              // Apply the inverse of getBaseMatrix(currentTheta) to find the required camera ray
+              // getBaseMatrix columns: c0=(-st, ct, 0), c1=(0, 0, 1), c2=(ct, st, 0)
+              let cx = -st * vx + ct * vy;
+              let cy = vz;
+              let cz = ct * vx + st * vy;
+
+              // Recover the x and y drag rotations from the camera ray (cx, cy, cz)
+              let snapX = Math.asin(Math.max(-1, Math.min(1, cy)));
+              let snapY = Math.atan2(cx, cz);
+
+              let dy = (snapY - targetDragRotY) % (2 * Math.PI);
+              if (dy > Math.PI) dy -= 2 * Math.PI;
+              if (dy < -Math.PI) dy += 2 * Math.PI;
+
+              let dx = snapX - targetDragRotX;
+              let dist = Math.hypot(dx, dy);
+
+              if (dist < bestDist) {
+                bestDist = dist;
+                bestSnapX = targetDragRotX + dx;
+                bestSnapY = targetDragRotY + dy;
+              }
+            }
+
+            if (bestDist < 0.02) { // ~1 degree magnetic snap threshold
+              targetDragRotX += (bestSnapX - targetDragRotX) * 0.1;
+              targetDragRotY += (bestSnapY - targetDragRotY) * 0.1;
+            }
+          }
         }
 
         currentDragRotX += (targetDragRotX - currentDragRotX) * 0.1;
