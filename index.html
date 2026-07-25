@@ -58,7 +58,10 @@
         <p>Try opening this in a recent version of Chrome or Edge.</p>
       </div>
       <canvas id="gpuCanvas"></canvas>
-      <button id="fullscreenBtn">Full Screen</button>
+      <div class="button-container">
+        <button id="wireframeBtn">Wireframe</button>
+        <button id="fullscreenBtn">Full Screen</button>
+      </div>
     </div>
     <div class="scroll-padding"></div>
   </div>
@@ -137,27 +140,37 @@
       padding: 20px;
     }
 
-    #fullscreenBtn {
+    .button-container {
       position: absolute;
       bottom: 12px;
       right: 12px;
+      display: flex;
+      gap: 8px;
+      z-index: 10;
+    }
+
+    .button-container button {
       padding: 8px 14px;
       background: rgba(45, 30, 20, 0.8);
       color: #ffc285;
       border: 1px solid rgba(230, 150, 70, 0.4);
       border-radius: 6px;
       cursor: pointer;
-      z-index: 10;
       font-family: sans-serif;
       font-size: 13px;
       backdrop-filter: blur(8px);
       transition: all 0.2s ease;
     }
 
-    #fullscreenBtn:hover {
+    .button-container button:hover {
       background: rgba(70, 45, 30, 0.95);
       color: #ffe6cc;
       border-color: rgba(255, 170, 90, 0.7);
+    }
+
+    .button-container button.active {
+      background: rgba(230, 150, 70, 0.8);
+      color: #2d1e14;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -172,23 +185,35 @@
         background-color: #0d1117;
       }
 
-      #fullscreenBtn {
+      .button-container button {
         background: rgba(45, 30, 20, 0.8);
         color: #ffc285;
         border: 1px solid rgba(230, 150, 70, 0.4);
       }
 
-      #fullscreenBtn:hover {
+      .button-container button:hover {
         background: rgba(70, 45, 30, 0.95);
         color: #ffe6cc;
         border-color: rgba(255, 170, 90, 0.7);
+      }
+
+      .button-container button.active {
+        background: rgba(230, 150, 70, 0.8);
+        color: #2d1e14;
       }
     }
   </style>
 
   <script type="module">
     const fullscreenBtn = document.getElementById('fullscreenBtn');
+    const wireframeBtn = document.getElementById('wireframeBtn');
     const figureContainer = document.getElementById('figureContainer');
+
+    let isWireframe = false;
+    wireframeBtn.addEventListener('click', () => {
+      isWireframe = !isWireframe;
+      wireframeBtn.classList.toggle('active', isWireframe);
+    });
 
     fullscreenBtn.addEventListener('click', () => {
       if (!document.fullscreenElement) {
@@ -403,6 +428,153 @@
         }]
       });
 
+      // --- WIREFRAME PIPELINE ---
+      const wireframeWgsl = `
+              struct Uniforms {
+                  resolution: vec2<f32>,
+                  dragRot: vec2<f32>,
+                  zoom: f32,
+                  theta: f32,
+                  isDarkMode: f32,
+              }
+              @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+              fn rot(a: f32) -> mat2x2<f32> {
+                  let s = sin(a);
+                  let c = cos(a);
+                  return mat2x2<f32>(c, -s, s, c);
+              }
+
+              fn getBaseMatrix(theta: f32) -> mat3x3<f32> {
+                  let c = cos(theta);
+                  let s = sin(theta);
+                  return mat3x3<f32>(
+                      vec3<f32>(-s,  c, 0.0),
+                      vec3<f32>( 0.0, 0.0, 1.0),
+                      vec3<f32>( c,  s, 0.0)
+                  );
+              }
+
+              @vertex
+              fn vs_main(@location(0) pos: vec3<f32>) -> @builtin(position) vec4<f32> {
+                  let baseMat = getBaseMatrix(uniforms.theta);
+                  let invBaseMat = mat3x3<f32>(
+                      vec3<f32>(baseMat[0][0], baseMat[1][0], baseMat[2][0]),
+                      vec3<f32>(baseMat[0][1], baseMat[1][1], baseMat[2][1]),
+                      vec3<f32>(baseMat[0][2], baseMat[1][2], baseMat[2][2])
+                  );
+                  var p_cam = invBaseMat * pos;
+                  
+                  let rotY_inv = rot(-uniforms.dragRot.y);
+                  let xz_unrot = rotY_inv * vec2<f32>(p_cam.x, p_cam.z);
+                  p_cam.x = xz_unrot.x;
+                  p_cam.z = xz_unrot.y;
+
+                  let rotX_inv2 = rot(-uniforms.dragRot.x);
+                  let yz_unrot = rotX_inv2 * vec2<f32>(p_cam.y, p_cam.z);
+                  p_cam.y = yz_unrot.x;
+                  p_cam.z = yz_unrot.y;
+
+                  let min_res = min(uniforms.resolution.x, uniforms.resolution.y);
+                  let clip_x = (2.0 * p_cam.x / uniforms.zoom) * (min_res / uniforms.resolution.x);
+                  let clip_y = -(2.0 * p_cam.y / uniforms.zoom) * (min_res / uniforms.resolution.y);
+                  let clip_z = p_cam.z * 0.1 + 0.5;
+
+                  return vec4<f32>(clip_x, clip_y, clip_z, 1.0);
+              }
+
+              @fragment
+              fn fs_main() -> @location(0) vec4<f32> {
+                  if (uniforms.isDarkMode < 0.5) {
+                      return vec4<f32>(0.2, 0.4, 0.8, 0.3); // Blueish in light mode
+                  }
+                  return vec4<f32>(0.85, 0.5, 0.15, 0.3); // Orange/Copper in dark mode
+              }
+      `;
+
+      const wireframeShader = device.createShaderModule({ code: wireframeWgsl });
+      
+      const wireframePipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: {
+          module: wireframeShader,
+          entryPoint: 'vs_main',
+          buffers: [{
+            arrayStride: 12,
+            attributes: [{
+              shaderLocation: 0,
+              offset: 0,
+              format: 'float32x3'
+            }]
+          }]
+        },
+        fragment: {
+          module: wireframeShader,
+          entryPoint: 'fs_main',
+          targets: [{ 
+            format: presentationFormat,
+            blend: {
+              color: {
+                srcFactor: 'src-alpha',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+              alpha: {
+                srcFactor: 'one',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+            }
+          }],
+        },
+        primitive: {
+          topology: 'line-list',
+        },
+      });
+
+      const linesData = [];
+      function addLine(p1, p2) {
+        linesData.push(...p1, ...p2);
+      }
+      function genSierpinski(v0, v1, v2, v3, depth) {
+        if (depth === 0) {
+          addLine(v0, v1); addLine(v1, v2); addLine(v2, v0);
+          addLine(v0, v3); addLine(v1, v3); addLine(v2, v3);
+          return;
+        }
+        const m01 = [(v0[0]+v1[0])/2, (v0[1]+v1[1])/2, (v0[2]+v1[2])/2];
+        const m02 = [(v0[0]+v2[0])/2, (v0[1]+v2[1])/2, (v0[2]+v2[2])/2];
+        const m03 = [(v0[0]+v3[0])/2, (v0[1]+v3[1])/2, (v0[2]+v3[2])/2];
+        const m12 = [(v1[0]+v2[0])/2, (v1[1]+v2[1])/2, (v1[2]+v2[2])/2];
+        const m13 = [(v1[0]+v3[0])/2, (v1[1]+v3[1])/2, (v1[2]+v3[2])/2];
+        const m23 = [(v2[0]+v3[0])/2, (v2[1]+v3[1])/2, (v2[2]+v3[2])/2];
+
+        genSierpinski(v0, m01, m02, m03, depth - 1);
+        genSierpinski(m01, v1, m12, m13, depth - 1);
+        genSierpinski(m02, m12, v2, m23, depth - 1);
+        genSierpinski(m03, m13, m23, v3, depth - 1);
+      }
+      
+      const p0 = [1, 1, 1];
+      const p1 = [-1, -1, 1];
+      const p2 = [1, -1, -1];
+      const p3 = [-1, 1, -1];
+      genSierpinski(p0, p1, p2, p3, 6);
+      
+      const vertexBuffer = device.createBuffer({
+        size: linesData.length * 4,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(vertexBuffer, 0, new Float32Array(linesData));
+      
+      const wireframeBindGroup = device.createBindGroup({
+        layout: wireframePipeline.getBindGroupLayout(0),
+        entries: [{
+          binding: 0,
+          resource: { buffer: uniformBuffer }
+        }]
+      });
+
       const uniformData = new Float32Array(8);
 
       // --- INTERACTIVE CONTROLS ---
@@ -587,9 +759,16 @@
         };
 
         const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-        passEncoder.setPipeline(pipeline);
-        passEncoder.setBindGroup(0, bindGroup);
-        passEncoder.draw(6, 1, 0, 0);
+        if (isWireframe) {
+          passEncoder.setPipeline(wireframePipeline);
+          passEncoder.setBindGroup(0, wireframeBindGroup);
+          passEncoder.setVertexBuffer(0, vertexBuffer);
+          passEncoder.draw(linesData.length / 3, 1, 0, 0);
+        } else {
+          passEncoder.setPipeline(pipeline);
+          passEncoder.setBindGroup(0, bindGroup);
+          passEncoder.draw(6, 1, 0, 0);
+        }
         passEncoder.end();
 
         device.queue.submit([commandEncoder.finish()]);
