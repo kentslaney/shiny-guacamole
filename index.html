@@ -232,8 +232,8 @@
 
                   var scale: f32 = 1.0;
 
-                  // Fold space 8 times to create the fractal
-                  for (var i = 0; i < 8; i++) {
+                  // Fold space 14 times to create high-detail fractal
+                  for (var i = 0; i < 14; i++) {
                       // Strict WGSL assignment avoiding complex left-hand swizzling
                       if (p.x + p.y < 0.0) {
                           let temp = -vec2<f32>(p.y, p.x);
@@ -253,13 +253,14 @@
                       scale *= 2.0;
                   }
 
-                  // Return distance to the base tetrahedron, adjusted by scale
-                  return (length(p) - 1.0) / scale;
+                  // Return distance to sharp tetrahedron face (x+y+z=1), scaled back
+                  // 1.0 / sqrt(3.0) ≈ 0.57735027 gives exact plane distance
+                  return (p.x + p.y + p.z - 1.0) * 0.57735027 / scale;
               }
 
               // Calculate normals for lighting based on SDF gradient
               fn calcNormal(p: vec3<f32>) -> vec3<f32> {
-                  let e = vec2<f32>(0.001, 0.0);
+                  let e = vec2<f32>(0.0003, 0.0);
                   let nx = sdSierpinski(p + vec3<f32>(e.x, e.y, e.y)) - sdSierpinski(p - vec3<f32>(e.x, e.y, e.y));
                   let ny = sdSierpinski(p + vec3<f32>(e.y, e.x, e.y)) - sdSierpinski(p - vec3<f32>(e.y, e.x, e.y));
                   let nz = sdSierpinski(p + vec3<f32>(e.y, e.y, e.x)) - sdSierpinski(p - vec3<f32>(e.y, e.y, e.x));
@@ -280,10 +281,10 @@
                   // Raymarching Loop
                   var t: f32 = 0.0;
                   var d: f32 = 0.0;
-                  for(var i = 0; i < 100; i++) {
+                  for(var i = 0; i < 160; i++) {
                       let p = ro + rd * t;
                       d = sdSierpinski(p);
-                      if(d < 0.001 || t > 10.0) { break; }
+                      if(d < 0.0004 || t > 10.0) { break; }
                       t += d;
                   }
 
