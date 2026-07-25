@@ -76,22 +76,34 @@
     .figure-container {
       position: relative;
       width: 100%;
-      height: 400px;
-      background-color: #000;
+      aspect-ratio: 1 / 1;
+      background-color: #f6f8fa;
       margin-top: 20px;
       border-radius: 8px;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
       overflow: hidden;
     }
 
     .figure-container:fullscreen {
       width: 100vw;
       height: 100vh;
+      aspect-ratio: auto;
       border-radius: 0;
-      background-color: #000;
+      border: none;
+      background-color: #f6f8fa;
     }
 
     .figure-container:fullscreen::backdrop {
-      background-color: transparent;
+      background-color: #f6f8fa;
+    }
+
+    /* Heuristic targeting for AR / Spatial fullscreen devices */
+    @media (transparent-viewport: enabled), (display-mode: xr), (display-mode: immersive) {
+      .figure-container:fullscreen,
+      .figure-container:fullscreen::backdrop {
+        background-color: transparent;
+      }
     }
 
     .figure-container canvas {
@@ -116,20 +128,50 @@
 
     #fullscreenBtn {
       position: absolute;
-      bottom: 10px;
-      right: 10px;
-      padding: 8px 12px;
-      background: rgba(255, 255, 255, 0.2);
-      color: white;
-      border: none;
-      border-radius: 4px;
+      bottom: 12px;
+      right: 12px;
+      padding: 8px 14px;
+      background: rgba(30, 15, 45, 0.75);
+      color: #cbb2ff;
+      border: 1px solid rgba(160, 100, 240, 0.35);
+      border-radius: 6px;
       cursor: pointer;
       z-index: 10;
       font-family: sans-serif;
+      font-size: 13px;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
     }
 
     #fullscreenBtn:hover {
-      background: rgba(255, 255, 255, 0.4);
+      background: rgba(55, 25, 85, 0.9);
+      color: #ebd9ff;
+      border-color: rgba(190, 130, 255, 0.6);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .figure-container {
+        background-color: #0d1117;
+        border-color: rgba(255, 255, 255, 0.15);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      }
+
+      .figure-container:fullscreen,
+      .figure-container:fullscreen::backdrop {
+        background-color: #0d1117;
+      }
+
+      #fullscreenBtn {
+        background: rgba(45, 30, 20, 0.8);
+        color: #ffc285;
+        border: 1px solid rgba(230, 150, 70, 0.4);
+      }
+
+      #fullscreenBtn:hover {
+        background: rgba(70, 45, 30, 0.95);
+        color: #ffe6cc;
+        border-color: rgba(255, 170, 90, 0.7);
+      }
     }
   </style>
 
@@ -186,7 +228,7 @@
                   resolution: vec2<f32>,
                   rotation: vec2<f32>,
                   zoom: f32,
-                  pad: f32,
+                  isDarkMode: f32,
               }
 
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -296,16 +338,30 @@
                       let p = ro + rd * t;
                       let n = calcNormal(p);
 
-                      // Simple directional lighting
+                      // Directional lighting
                       let lightDir = normalize(vec3<f32>(1.0, 1.0, -1.0));
                       let diff = max(dot(n, lightDir), 0.0);
 
-                      // Ambient occlusion based on iteration count / distance
+                      // Ambient occlusion based on ray distance
                       let ao = clamp(1.0 - t * 0.15, 0.0, 1.0);
 
-                      // Base color mixed with lighting
-                      let baseColor = vec3<f32>(0.9, 0.6, 0.3); // Copper/orange tone
-                      color = baseColor * diff * ao + (baseColor * 0.2); // Add ambient light
+                      if (uniforms.isDarkMode > 0.5) {
+                          // Original copper/orange tone for prefers-color-scheme: dark
+                          let baseColor = vec3<f32>(0.9, 0.6, 0.3);
+                          color = baseColor * diff * ao + (baseColor * 0.2);
+                      } else {
+                          // Dark Nebula Filament Color Scheme for light mode
+                          let nebulaPrimary = vec3<f32>(0.22, 0.06, 0.38);   // Dark cosmic violet/magenta
+                          let nebulaSecondary = vec3<f32>(0.05, 0.22, 0.38); // Dark deep indigo/teal
+                          let glowAccent = vec3<f32>(0.48, 0.18, 0.68);      // Filament highlight glow
+
+                          let mixFactor = clamp(n.x * 0.5 + 0.5, 0.0, 1.0);
+                          let baseColor = mix(nebulaPrimary, nebulaSecondary, mixFactor);
+
+                          let fresnel = pow(1.0 - max(dot(-rd, n), 0.0), 2.5);
+
+                          color = baseColor * (diff * 0.7 + 0.15) * ao + glowAccent * fresnel * 0.5 * ao;
+                      }
                       alpha = 1.0;
                   }
 
@@ -356,16 +412,25 @@
       let currentRotY = 0.6;
 
       let velX = 0;
-      let velY = 0.002; // Initial subtle auto-spin
+      let velY = 0; // No rotation without user input
 
-      let targetZoom = 2.5;
-      let currentZoom = 2.5;
+      // Initial zoom set to 3.6 so the fractal (bounding radius sqrt(3) ≈ 1.732)
+      // fits inside the viewport (half-extent 1.8) at EVERY 3D rotation angle.
+      let targetZoom = 3.6;
+      let currentZoom = 3.6;
 
       let isDragging = false;
       let lastPointerX = 0;
       let lastPointerY = 0;
       let initialPinchDist = null;
-      let initialPinchZoom = 2.5;
+      let initialPinchZoom = 3.6;
+
+      // Dark mode listener for prefers-color-scheme
+      const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      let isDarkMode = darkModeQuery.matches ? 1.0 : 0.0;
+      darkModeQuery.addEventListener('change', (e) => {
+        isDarkMode = e.matches ? 1.0 : 0.0;
+      });
 
       canvas.addEventListener('pointerdown', (e) => {
         isDragging = true;
@@ -453,11 +518,6 @@
           targetRotX += velX;
           velY *= 0.94; // Decay velocity gradually
           velX *= 0.94;
-
-          // Subtle idle rotation when velocity is near zero
-          if (Math.abs(velY) < 0.00005 && Math.abs(velX) < 0.00005) {
-            velY = 0.0008;
-          }
         }
 
         // Smooth damping (lerp) toward target values
@@ -471,6 +531,7 @@
         uniformData[2] = currentRotX;
         uniformData[3] = currentRotY;
         uniformData[4] = currentZoom;
+        uniformData[5] = isDarkMode;
 
         // Write uniforms to GPU
         device.queue.writeBuffer(uniformBuffer, 0, uniformData);
@@ -482,7 +543,7 @@
         const renderPassDescriptor = {
           colorAttachments: [{
             view: textureView,
-            clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            clearValue: { r: 0.0, g: 0.0, b: 0.0, a: 0.0 },
             loadOp: 'clear',
             storeOp: 'store',
           }],
