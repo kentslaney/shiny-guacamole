@@ -596,9 +596,14 @@
       let initialPinchZoom = 3.2;
 
       let isHovering = false;
+      let hasBeenDragged = false;
+      let lockedTheta = Math.PI / 4;
+      let currentTheta = Math.PI / 4;
+
       figureContainer.addEventListener('pointerenter', () => { isHovering = true; });
       figureContainer.addEventListener('pointerleave', (e) => {
         isHovering = false;
+        hasBeenDragged = false;
         stopDrag(e);
       });
 
@@ -628,6 +633,13 @@
         const dy = e.clientY - lastPointerY;
         lastPointerX = e.clientX;
         lastPointerY = e.clientY;
+
+        if (Math.abs(dx) > 0 || Math.abs(dy) > 0) {
+          if (!hasBeenDragged) {
+            hasBeenDragged = true;
+            lockedTheta = currentTheta;
+          }
+        }
 
         const sensitivity = 0.005;
         velY = dx * sensitivity;
@@ -711,7 +723,11 @@
         // theta = 90 degrees (Square View)
         const theta_end = Math.PI / 2;
 
-        const currentTheta = theta_start + (theta_end - theta_start) * p_eased;
+        let targetTheta = theta_start + (theta_end - theta_start) * p_eased;
+        if (hasBeenDragged && isHovering) {
+          targetTheta = lockedTheta;
+        }
+        currentTheta += (targetTheta - currentTheta) * 0.1;
 
         // Interactive Drag Easing
         if (!isDragging && !isHovering) {
