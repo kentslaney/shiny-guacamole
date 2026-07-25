@@ -846,6 +846,12 @@
 
         // Interactive Drag Easing
         if (!isDragging && !isHovering && !isFS()) {
+          // Wrap targetDragRotY to [-PI, PI] so resetting takes the shortest route
+          let targetWrapY = targetDragRotY % (2 * Math.PI);
+          if (targetWrapY > Math.PI) targetWrapY -= 2 * Math.PI;
+          if (targetWrapY < -Math.PI) targetWrapY += 2 * Math.PI;
+          targetDragRotY = targetWrapY;
+
           // Slowly spring back to the pure scroll interpolation view
           targetDragRotX *= 0.95;
           targetDragRotY *= 0.95;
@@ -917,7 +923,12 @@
         }
 
         currentDragRotX += (targetDragRotX - currentDragRotX) * 0.1;
-        currentDragRotY += (targetDragRotY - currentDragRotY) * 0.1;
+
+        let diffY = (targetDragRotY - currentDragRotY) % (2 * Math.PI);
+        if (diffY > Math.PI) diffY -= 2 * Math.PI;
+        if (diffY < -Math.PI) diffY += 2 * Math.PI;
+        currentDragRotY += diffY * 0.1;
+
         currentZoom += (targetZoom - currentZoom) * 0.1;
 
         if (hasBeenDragged && !isHovering && !isDragging && !isFS()) {
