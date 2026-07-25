@@ -99,6 +99,11 @@
       width: 100%;
       height: 100%;
       touch-action: none;
+      cursor: grab;
+    }
+
+    .figure-container canvas:active {
+      cursor: grabbing;
     }
 
     #error-msg {
@@ -179,7 +184,9 @@
       const wgslSource = `
               struct Uniforms {
                   resolution: vec2<f32>,
-                  mouse: vec2<f32>,
+                  rotation: vec2<f32>,
+                  zoom: f32,
+                  pad: f32,
               }
 
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -209,9 +216,9 @@
               fn sdSierpinski(p_in: vec3<f32>) -> f32 {
                   var p = p_in;
 
-                  // Mouse-based 3D Rotation
-                  let rotY = rot(uniforms.mouse.x * 6.28318); // Left-Right mouse movement
-                  let rotX = rot(uniforms.mouse.y * 6.28318); // Up-Down mouse movement
+                  // 3D Orbit Rotation
+                  let rotY = rot(uniforms.rotation.y); // Yaw (Left-Right)
+                  let rotX = rot(uniforms.rotation.x); // Pitch (Up-Down)
 
                   // Apply Y rotation (affects X and Z)
                   let xz = rotY * vec2<f32>(p.x, p.z);
@@ -266,7 +273,7 @@
                   let uv = (coord.xy - 0.5 * uniforms.resolution.xy) / min_res;
 
                   // ORTHOGRAPHIC CAMERA SETUP
-                  let orthoSize: f32 = 2.5;
+                  let orthoSize: f32 = uniforms.zoom;
                   let ro = vec3<f32>(uv * orthoSize, -3.0);
                   let rd = vec3<f32>(0.0, 0.0, 1.0);
 
@@ -324,9 +331,9 @@
         },
       });
 
-      // Uniform Buffer (2 vec2s = 4 floats = 16 bytes)
+      // Uniform Buffer (struct Uniforms = 6 floats -> 24 bytes, 32-byte WebGPU aligned)
       const uniformBuffer = device.createBuffer({
-        size: 16,
+        size: 32,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
 
@@ -338,27 +345,93 @@
         }]
       });
 
-      // Data array to send to the GPU
-      const uniformData = new Float32Array(4);
+      // Data array to send to the GPU (8 floats = 32 bytes)
+      const uniformData = new Float32Array(8);
 
-      // --- INPUT HANDLING ---
-      let mouseX = 0.1; // Default rotation
-      let mouseY = 0.05;
+      // --- INTERACTIVE CONTROLS (Arcball Drag Orbit, Momentum & Zoom) ---
+      let targetRotX = 0.3;  // Pitch (radians)
+      let targetRotY = 0.6;  // Yaw (radians)
+      let currentRotX = 0.3;
+      let currentRotY = 0.6;
 
-      function updateMouse(x, y) {
-        // Normalize to [0.0, 1.0]
-        mouseX = x / canvas.clientWidth;
-        mouseY = y / canvas.clientHeight;
-      }
+      let velX = 0;
+      let velY = 0.002; // Initial subtle auto-spin
 
-      canvas.addEventListener('mousemove', (e) => {
-        updateMouse(e.offsetX, e.offsetY);
+      let targetZoom = 2.5;
+      let currentZoom = 2.5;
+
+      let isDragging = false;
+      let lastPointerX = 0;
+      let lastPointerY = 0;
+      let initialPinchDist = null;
+      let initialPinchZoom = 2.5;
+
+      canvas.addEventListener('pointerdown', (e) => {
+        isDragging = true;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+        velX = 0;
+        velY = 0;
+        try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+      });
+
+      canvas.addEventListener('pointermove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - lastPointerX;
+        const dy = e.clientY - lastPointerY;
+        lastPointerX = e.clientX;
+        lastPointerY = e.clientY;
+
+        const sensitivity = 0.005;
+        velY = dx * sensitivity;
+        velX = dy * sensitivity;
+
+        targetRotY += velY;
+        targetRotX += velX;
+      });
+
+      const stopDrag = (e) => {
+        if (isDragging) {
+          isDragging = false;
+          try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+        }
+      };
+
+      canvas.addEventListener('pointerup', stopDrag);
+      canvas.addEventListener('pointercancel', stopDrag);
+
+      // Mouse Wheel Zoom
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 1.08 : 0.92;
+        targetZoom = Math.min(Math.max(targetZoom * factor, 0.5), 10.0);
+      }, { passive: false });
+
+      // Touch Pinch-to-Zoom
+      canvas.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+          initialPinchDist = Math.hypot(
+            e.touches[0].clientX - e.touches[1].clientX,
+            e.touches[0].clientY - e.touches[1].clientY
+          );
+          initialPinchZoom = targetZoom;
+        }
       });
 
       canvas.addEventListener('touchmove', (e) => {
-        if (e.touches.length > 0) {
-          const rect = canvas.getBoundingClientRect();
-          updateMouse(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top);
+        if (e.touches.length === 2 && initialPinchDist) {
+          const currentDist = Math.hypot(
+            e.touches[0].clientX - e.touches[1].clientX,
+            e.touches[0].clientY - e.touches[1].clientY
+          );
+          const factor = initialPinchDist / currentDist;
+          targetZoom = Math.min(Math.max(initialPinchZoom * factor, 0.5), 10.0);
+        }
+      });
+
+      canvas.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) {
+          initialPinchDist = null;
         }
       });
 
@@ -373,11 +446,30 @@
           canvas.height = displayHeight;
         }
 
+        // Momentum physics & smooth interpolation
+        if (!isDragging) {
+          targetRotY += velY;
+          targetRotX += velX;
+          velY *= 0.94; // Decay velocity gradually
+          velX *= 0.94;
+
+          // Subtle idle rotation when velocity is near zero
+          if (Math.abs(velY) < 0.00005 && Math.abs(velX) < 0.00005) {
+            velY = 0.0008;
+          }
+        }
+
+        // Smooth damping (lerp) toward target values
+        currentRotX += (targetRotX - currentRotX) * 0.1;
+        currentRotY += (targetRotY - currentRotY) * 0.1;
+        currentZoom += (targetZoom - currentZoom) * 0.1;
+
         // Update uniform data
         uniformData[0] = canvas.width;
         uniformData[1] = canvas.height;
-        uniformData[2] = mouseX;
-        uniformData[3] = mouseY;
+        uniformData[2] = currentRotX;
+        uniformData[3] = currentRotY;
+        uniformData[4] = currentZoom;
 
         // Write uniforms to GPU
         device.queue.writeBuffer(uniformBuffer, 0, uniformData);
