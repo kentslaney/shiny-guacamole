@@ -95,7 +95,10 @@
       position: fixed;
       top: 0;
       left: 0;
+      right: 0;
+      bottom: 0;
       width: 100vw;
+      width: 100dvw;
       height: 100vh;
       height: 100dvh;
       max-width: none;
@@ -104,6 +107,11 @@
       border: none;
       background-color: #f6f8fa;
       z-index: 99999;
+    }
+
+    body.is-fullscreen-active {
+      overflow: hidden;
+      background-color: #f6f8fa;
     }
 
     .figure-container:fullscreen::backdrop,
@@ -152,23 +160,26 @@
 
     .button-container {
       position: absolute;
-      bottom: max(12px, env(safe-area-inset-bottom, 12px));
-      right: max(12px, env(safe-area-inset-right, 12px));
+      bottom: max(24px, calc(16px + env(safe-area-inset-bottom, 0px)));
+      right: max(20px, calc(16px + env(safe-area-inset-right, 0px)));
       display: flex;
-      gap: 8px;
-      z-index: 10;
+      gap: 10px;
+      z-index: 100000;
     }
 
     .button-container button {
-      padding: 8px 14px;
-      background: rgba(45, 30, 20, 0.8);
+      padding: 10px 16px;
+      min-height: 44px;
+      touch-action: manipulation;
+      background: rgba(45, 30, 20, 0.85);
       color: #ffc285;
       border: 1px solid rgba(230, 150, 70, 0.4);
-      border-radius: 6px;
+      border-radius: 8px;
       cursor: pointer;
       font-family: sans-serif;
-      font-size: 13px;
-      backdrop-filter: blur(8px);
+      font-size: 14px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       transition: all 0.2s ease;
     }
 
@@ -184,6 +195,10 @@
     }
 
     @media (prefers-color-scheme: dark) {
+      body.is-fullscreen-active {
+        background-color: #0d1117;
+      }
+
       .figure-container {
         background-color: #0d1117;
         border-color: rgba(255, 255, 255, 0.15);
@@ -236,7 +251,9 @@
     }
 
     function updateFullscreenBtn() {
-      fullscreenBtn.textContent = isFS() ? 'Exit Full Screen' : 'Full Screen';
+      const active = isFS();
+      fullscreenBtn.textContent = active ? 'Exit Full Screen' : 'Full Screen';
+      document.body.classList.toggle('is-fullscreen-active', active);
     }
 
     fullscreenBtn.addEventListener('click', () => {
@@ -296,6 +313,9 @@
         format: presentationFormat,
         alphaMode: 'premultiplied',
       });
+
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 1024);
+      const fractalIterations = isMobile ? 10 : 14;
 
       // --- WGSL SHADER SOURCE ---
       const wgslSource = `
@@ -365,8 +385,8 @@
 
                   var scale: f32 = 1.0;
 
-                  // Fold space 14 times to create high-detail fractal
-                  for (var i = 0; i < 14; i++) {
+                  // Fold space dynamically based on device performance
+                  for (var i = 0; i < ${fractalIterations}; i++) {
                       if (p.x + p.y < 0.0) { let temp = -p.y; p.y = -p.x; p.x = temp; }
                       if (p.x + p.z < 0.0) { let temp = -p.z; p.z = -p.x; p.x = temp; }
                       if (p.y + p.z < 0.0) { let temp = -p.z; p.z = -p.y; p.y = temp; }
@@ -598,7 +618,7 @@
       const p1 = [-1, -1, 1];
       const p2 = [1, -1, -1];
       const p3 = [-1, 1, -1];
-      genSierpinski(p0, p1, p2, p3, 6);
+      genSierpinski(p0, p1, p2, p3, isMobile ? 4 : 6);
       
       const vertexBuffer = device.createBuffer({
         size: linesData.length * 4,
@@ -769,13 +789,13 @@
 
         const scrollTheta = theta_start + (theta_end - theta_start) * p_eased;
         let targetTheta = scrollTheta;
-        if (hasBeenDragged && isHovering) {
+        if (hasBeenDragged && (isHovering || isFS())) {
           targetTheta = lockedTheta;
         }
         currentTheta += (targetTheta - currentTheta) * 0.1;
 
         // Interactive Drag Easing
-        if (!isDragging && !isHovering) {
+        if (!isDragging && !isHovering && !isFS()) {
           // Slowly spring back to the pure scroll interpolation view
           targetDragRotX *= 0.95;
           targetDragRotY *= 0.95;
@@ -790,7 +810,7 @@
         currentDragRotY += (targetDragRotY - currentDragRotY) * 0.1;
         currentZoom += (targetZoom - currentZoom) * 0.1;
 
-        if (hasBeenDragged && !isHovering && !isDragging) {
+        if (hasBeenDragged && !isHovering && !isDragging && !isFS()) {
           const rotNearZero = Math.abs(currentDragRotX) < 0.001 &&
                               Math.abs(currentDragRotY) < 0.001 &&
                               Math.abs(targetDragRotX) < 0.001 &&
