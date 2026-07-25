@@ -84,7 +84,14 @@
     }
 
     .figure-container:fullscreen {
+      width: 100vw;
+      height: 100vh;
       border-radius: 0;
+      background-color: #000;
+    }
+
+    .figure-container:fullscreen::backdrop {
+      background-color: transparent;
     }
 
     .figure-container canvas {
@@ -254,8 +261,9 @@
 
               @fragment
               fn fs_main(@builtin(position) coord: vec4<f32>) -> @location(0) vec4<f32> {
-                  // Normalize pixel coordinates (from -1 to 1)
-                  let uv = (coord.xy - 0.5 * uniforms.resolution.xy) / uniforms.resolution.y;
+                  // Normalize pixel coordinates to fit the shortest dimension
+                  let min_res = min(uniforms.resolution.x, uniforms.resolution.y);
+                  let uv = (coord.xy - 0.5 * uniforms.resolution.xy) / min_res;
 
                   // ORTHOGRAPHIC CAMERA SETUP
                   let orthoSize: f32 = 2.5;
@@ -273,7 +281,8 @@
                   }
 
                   // Shading and Coloring
-                  var color = vec3<f32>(0.05, 0.05, 0.08); // Background color
+                  var color = vec3<f32>(0.0, 0.0, 0.0); // Transparent background
+                  var alpha: f32 = 0.0;
 
                   if(t < 10.0) { // If we hit the fractal
                       let p = ro + rd * t;
@@ -289,9 +298,10 @@
                       // Base color mixed with lighting
                       let baseColor = vec3<f32>(0.9, 0.6, 0.3); // Copper/orange tone
                       color = baseColor * diff * ao + (baseColor * 0.2); // Add ambient light
+                      alpha = 1.0;
                   }
 
-                  return vec4<f32>(color, 1.0);
+                  return vec4<f32>(color, alpha);
               }
           `;
 
@@ -354,9 +364,10 @@
 
       // --- RENDER LOOP ---
       function render() {
-        // Handle canvas resize
-        const displayWidth = canvas.clientWidth;
-        const displayHeight = canvas.clientHeight;
+        // Handle canvas resize (accounting for Device Pixel Ratio for High-DPI / Retina displays)
+        const dpr = window.devicePixelRatio || 1;
+        const displayWidth = Math.floor(canvas.clientWidth * dpr);
+        const displayHeight = Math.floor(canvas.clientHeight * dpr);
         if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
           canvas.width = displayWidth;
           canvas.height = displayHeight;
