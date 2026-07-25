@@ -760,6 +760,11 @@
       const stopDrag = (e) => {
         if (isDragging) {
           isDragging = false;
+          // If the final velocity is too small, clear it so there's no residual coasting
+          if (Math.abs(velX) < 0.015 && Math.abs(velY) < 0.015) {
+            velX = 0;
+            velY = 0;
+          }
           try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
         }
       };
