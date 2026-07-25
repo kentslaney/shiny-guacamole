@@ -586,24 +586,29 @@
       let velX = 0;
       let velY = 0;
 
-      let targetZoom = 3.2; // Optimized framing for the triangle/square bounds
-      let currentZoom = 3.2;
+      const initialZoomVal = 2 * Math.sqrt(3); // 2 * sqrt(3) ≈ 3.4641 ensures all vertices at radius sqrt(3) stay within bounds for any 3D rotation
+      let targetZoom = initialZoomVal;
+      let currentZoom = initialZoomVal;
 
       let isDragging = false;
       let lastPointerX = 0;
       let lastPointerY = 0;
       let initialPinchDist = null;
-      let initialPinchZoom = 3.2;
+      let initialPinchZoom = initialZoomVal;
 
       let isHovering = false;
       let hasBeenDragged = false;
       let lockedTheta = Math.PI / 4;
       let currentTheta = Math.PI / 4;
 
-      figureContainer.addEventListener('pointerenter', () => { isHovering = true; });
+      figureContainer.addEventListener('pointerenter', () => {
+        isHovering = true;
+        if (hasBeenDragged) {
+          lockedTheta = currentTheta;
+        }
+      });
       figureContainer.addEventListener('pointerleave', (e) => {
         isHovering = false;
-        hasBeenDragged = false;
         stopDrag(e);
       });
 
@@ -723,7 +728,8 @@
         // theta = 90 degrees (Square View)
         const theta_end = Math.PI / 2;
 
-        let targetTheta = theta_start + (theta_end - theta_start) * p_eased;
+        const scrollTheta = theta_start + (theta_end - theta_start) * p_eased;
+        let targetTheta = scrollTheta;
         if (hasBeenDragged && isHovering) {
           targetTheta = lockedTheta;
         }
@@ -744,6 +750,21 @@
         currentDragRotX += (targetDragRotX - currentDragRotX) * 0.1;
         currentDragRotY += (targetDragRotY - currentDragRotY) * 0.1;
         currentZoom += (targetZoom - currentZoom) * 0.1;
+
+        if (hasBeenDragged && !isHovering && !isDragging) {
+          const rotNearZero = Math.abs(currentDragRotX) < 0.001 &&
+                              Math.abs(currentDragRotY) < 0.001 &&
+                              Math.abs(targetDragRotX) < 0.001 &&
+                              Math.abs(targetDragRotY) < 0.001;
+          const thetaNearScroll = Math.abs(currentTheta - scrollTheta) < 0.001;
+          if (rotNearZero && thetaNearScroll) {
+            hasBeenDragged = false;
+            targetDragRotX = 0;
+            targetDragRotY = 0;
+            currentDragRotX = 0;
+            currentDragRotY = 0;
+          }
+        }
 
         // Update uniform data (8 floats)
         uniformData[0] = canvas.width;
