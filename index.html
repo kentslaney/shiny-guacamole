@@ -692,8 +692,9 @@
         // --- Exact Geometric Interpolation Path from User Screenshots ---
         const rect = figureContainer.getBoundingClientRect();
         const absoluteTop = rect.top + window.scrollY;
-        const scrollStart = absoluteTop + rect.height - window.innerHeight;
-        const scrollEnd = absoluteTop;
+        const scrollStart = Math.max(0, absoluteTop + rect.height - window.innerHeight);
+        const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        const scrollEnd = Math.min(absoluteTop, maxScroll);
 
         let scrollProgress = 0;
         const scrollRange = scrollEnd - scrollStart;
