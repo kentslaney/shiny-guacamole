@@ -337,8 +337,19 @@
         alphaMode: 'premultiplied',
       });
 
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 1024);
-      const fractalIterations = isMobile ? 10 : 14;
+      // --- CONFIGURATION & INTERACTIVE CONTROLS ---
+      const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (isTouchDevice && Math.min(window.screen.width, window.screen.height) < 1024);
+
+      // Performance & Fractal Configs
+      const fractalIterations = isMobile ? 8 : 12;
+      const wireframeDepth = isMobile ? 4 : 6;
+      const maxRaySteps = isMobile ? 80 : 160;
+      const maxDPR = isMobile ? 1.5 : 2.0;
+
+      // Rendering & Interaction Configs
+      let wireframeLineWidth = 2.0; // Doubled wireframe line width variable (default 1.0 -> 2.0)
+      const initialZoomVal = 2 * Math.sqrt(3); // 2 * sqrt(3) ≈ 3.4641 ensures all vertices stay in bounds for any rotation
 
       // --- WGSL SHADER SOURCE ---
       const wgslSource = `
@@ -348,6 +359,7 @@
                   zoom: f32,
                   theta: f32,
                   isDarkMode: f32,
+                  lineWidth: f32,
               }
 
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -443,7 +455,7 @@
                   // Raymarching Loop
                   var t: f32 = 0.0;
                   var d: f32 = 0.0;
-                  for(var i = 0; i < 160; i++) {
+                  for(var i = 0; i < ${maxRaySteps}; i++) {
                       let p = ro + rd * t;
                       d = sdSierpinski(p);
                       if(d < 0.0004 || t > 10.0) { break; }
@@ -518,6 +530,7 @@
                   zoom: f32,
                   theta: f32,
                   isDarkMode: f32,
+                  lineWidth: f32,
               }
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
@@ -538,7 +551,7 @@
               }
 
               @vertex
-              fn vs_main(@location(0) pos: vec3<f32>) -> @builtin(position) vec4<f32> {
+              fn vs_main(@location(0) pos: vec3<f32>, @builtin(instance_index) instanceIdx: u32) -> @builtin(position) vec4<f32> {
                   let baseMat = getBaseMatrix(uniforms.theta);
                   let invBaseMat = mat3x3<f32>(
                       vec3<f32>(baseMat[0][0], baseMat[1][0], baseMat[2][0]),
@@ -558,9 +571,18 @@
                   p_cam.z = yz_unrot.y;
 
                   let min_res = min(uniforms.resolution.x, uniforms.resolution.y);
-                  let clip_x = (2.0 * p_cam.x / uniforms.zoom) * (min_res / uniforms.resolution.x);
-                  let clip_y = -(2.0 * p_cam.y / uniforms.zoom) * (min_res / uniforms.resolution.y);
+                  var clip_x = (2.0 * p_cam.x / uniforms.zoom) * (min_res / uniforms.resolution.x);
+                  var clip_y = -(2.0 * p_cam.y / uniforms.zoom) * (min_res / uniforms.resolution.y);
                   let clip_z = p_cam.z * 0.1 + 0.5;
+
+                  let widthScale = max(1.0, uniforms.lineWidth);
+                  let numSide = u32(ceil(widthScale));
+                  if (numSide > 1u) {
+                      let stepX = f32(instanceIdx % numSide) - f32(numSide - 1u) * 0.5;
+                      let stepY = f32(instanceIdx / numSide) - f32(numSide - 1u) * 0.5;
+                      clip_x += (stepX * 0.75) * (2.0 / uniforms.resolution.x);
+                      clip_y += (stepY * 0.75) * (2.0 / uniforms.resolution.y);
+                  }
 
                   return vec4<f32>(clip_x, clip_y, clip_z, 1.0);
               }
@@ -641,7 +663,7 @@
       const p1 = [-1, -1, 1];
       const p2 = [1, -1, -1];
       const p3 = [-1, 1, -1];
-      genSierpinski(p0, p1, p2, p3, isMobile ? 4 : 6);
+      genSierpinski(p0, p1, p2, p3, wireframeDepth);
 
       const vertexBuffer = device.createBuffer({
         size: linesData.length * 4,
@@ -659,7 +681,7 @@
 
       const uniformData = new Float32Array(8);
 
-      // --- INTERACTIVE CONTROLS ---
+      // --- INTERACTIVE STATE ---
       let targetDragRotX = 0.0;
       let targetDragRotY = 0.0;
       let currentDragRotX = 0.0;
@@ -668,7 +690,6 @@
       let velX = 0;
       let velY = 0;
 
-      const initialZoomVal = 2 * Math.sqrt(3); // 2 * sqrt(3) ≈ 3.4641 ensures all vertices at radius sqrt(3) stay within bounds for any 3D rotation
       let targetZoom = initialZoomVal;
       let currentZoom = initialZoomVal;
 
@@ -780,7 +801,7 @@
 
       // --- RENDER LOOP ---
       function render() {
-        const dpr = window.devicePixelRatio || 1;
+        const dpr = Math.min(window.devicePixelRatio || 1, maxDPR);
         const displayWidth = Math.floor(canvas.clientWidth * dpr);
         const displayHeight = Math.floor(canvas.clientHeight * dpr);
         if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
@@ -856,6 +877,7 @@
         uniformData[4] = currentZoom;
         uniformData[5] = currentTheta;
         uniformData[6] = isDarkMode;
+        uniformData[7] = wireframeLineWidth;
 
         // Write uniforms to GPU
         device.queue.writeBuffer(uniformBuffer, 0, uniformData);
@@ -878,7 +900,8 @@
           passEncoder.setPipeline(wireframePipeline);
           passEncoder.setBindGroup(0, wireframeBindGroup);
           passEncoder.setVertexBuffer(0, vertexBuffer);
-          passEncoder.draw(linesData.length / 3, 1, 0, 0);
+          const instanceCount = Math.max(1, Math.ceil(wireframeLineWidth) * Math.ceil(wireframeLineWidth));
+          passEncoder.draw(linesData.length / 3, instanceCount, 0, 0);
         } else {
           passEncoder.setPipeline(pipeline);
           passEncoder.setBindGroup(0, bindGroup);
