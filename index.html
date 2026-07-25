@@ -231,10 +231,10 @@
       const wgslSource = `
               struct Uniforms {
                   resolution: vec2<f32>,
-                  rotation: vec2<f32>,
+                  dragRot: vec2<f32>,
                   zoom: f32,
+                  theta: f32,
                   isDarkMode: f32,
-                  roll: f32,
               }
 
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -260,64 +260,50 @@
                   return mat2x2<f32>(c, -s, s, c);
               }
 
-              // Inverse alignment transform: maps printer-aligned space (+Y up, flat base on XZ) to native fold space
-              fn printerToNative(p: vec3<f32>) -> vec3<f32> {
-                  let invSqrt2 = 0.70710678; // 1 / sqrt(2)
-                  let invSqrt3 = 0.57735027; // 1 / sqrt(3)
-                  let invSqrt6 = 0.40824829; // 1 / sqrt(6)
-
-                  let nx = invSqrt2 * p.x + invSqrt3 * p.y - invSqrt6 * p.z;
-                  let ny = -invSqrt2 * p.x + invSqrt3 * p.y - invSqrt6 * p.z;
-                  let nz = invSqrt3 * p.y + 2.0 * invSqrt6 * p.z;
-
-                  return vec3<f32>(nx, ny, nz);
+              // Get the base interpolation matrix based on angle theta
+              // theta = 45 deg (pi/4) -> 2D Triangle View
+              // theta = 90 deg (pi/2) -> 2D Square View
+              fn getBaseMatrix(theta: f32) -> mat3x3<f32> {
+                  let c = cos(theta);
+                  let s = sin(theta);
+                  // Columns: Right, Up, Forward (Camera space to Native space)
+                  return mat3x3<f32>(
+                      vec3<f32>(-s,  c, 0.0),
+                      vec3<f32>( 0.0, 0.0, 1.0),
+                      vec3<f32>( c,  s, 0.0)
+                  );
               }
 
               // Sierpinski Tetrahedron Distance Estimator
               fn sdSierpinski(p_in: vec3<f32>) -> f32 {
-                  var p = p_in;
+                  var p_cam = p_in;
 
-                  // 3D Turntable Camera Orbit
-                  let rotY = rot(uniforms.rotation.y); // Yaw (turntable spin around Y axis)
-                  let rotX = rot(uniforms.rotation.x); // Pitch (tilt view around X axis)
+                  // Apply local user drag orbit first
+                  let rotY = rot(uniforms.dragRot.y); // Yaw
+                  let rotX = rot(uniforms.dragRot.x); // Pitch
 
-                  // Apply pitch tilt first (world X axis)
-                  let yz = rotX * vec2<f32>(p.y, p.z);
-                  p.y = yz.x;
-                  p.z = yz.y;
+                  let yz = rotX * vec2<f32>(p_cam.y, p_cam.z);
+                  p_cam.y = yz.x;
+                  p_cam.z = yz.y;
 
-                  // Apply turntable yaw spin second (world Y axis)
-                  let xz = rotY * vec2<f32>(p.x, p.z);
-                  p.x = xz.x;
-                  p.z = xz.y;
+                  let xz = rotY * vec2<f32>(p_cam.x, p_cam.z);
+                  p_cam.x = xz.x;
+                  p_cam.z = xz.y;
 
-                  // Transform from printer space (+Y up, build plate on XZ) to native fold space
-                  p = printerToNative(p);
+                  // Transform to native tetrahedron space based on the interpolated theta view
+                  var p = getBaseMatrix(uniforms.theta) * p_cam;
 
                   var scale: f32 = 1.0;
 
                   // Fold space 14 times to create high-detail fractal
                   for (var i = 0; i < 14; i++) {
-                      // Strict WGSL assignment avoiding complex left-hand swizzling
-                      if (p.x + p.y < 0.0) {
-                          let temp = -vec2<f32>(p.y, p.x);
-                          p.x = temp.x; p.y = temp.y;
-                      }
-                      if (p.x + p.z < 0.0) {
-                          let temp = -vec2<f32>(p.z, p.x);
-                          p.x = temp.x; p.z = temp.y;
-                      }
-                      if (p.y + p.z < 0.0) {
-                          let temp = -vec2<f32>(p.z, p.y);
-                          p.y = temp.x; p.z = temp.y;
-                      }
-
-                      // Scale and offset
-                      p = p * 2.0 - vec3<f32>(1.0, 1.0, 1.0);
+                      if (p.x + p.y < 0.0) { let temp = -p.y; p.y = -p.x; p.x = temp; }
+                      if (p.x + p.z < 0.0) { let temp = -p.z; p.z = -p.x; p.x = temp; }
+                      if (p.y + p.z < 0.0) { let temp = -p.z; p.z = -p.y; p.y = temp; }
+                      p = p * 2.0 - vec3<f32>(1.0);
                       scale *= 2.0;
                   }
 
-                  // Return distance to sharp tetrahedron face (x+y+z=1), scaled back
                   // 1.0 / sqrt(3.0) ≈ 0.57735027 gives exact plane distance
                   return (p.x + p.y + p.z - 1.0) * 0.57735027 / scale;
               }
@@ -333,10 +319,8 @@
 
               @fragment
               fn fs_main(@builtin(position) coord: vec4<f32>) -> @location(0) vec4<f32> {
-                  // Normalize pixel coordinates to fit the shortest dimension
                   let min_res = min(uniforms.resolution.x, uniforms.resolution.y);
-                  var uv = (coord.xy - 0.5 * uniforms.resolution.xy) / min_res;
-                  uv = rot(uniforms.roll) * uv;
+                  let uv = (coord.xy - 0.5 * uniforms.resolution.xy) / min_res;
 
                   // ORTHOGRAPHIC CAMERA SETUP
                   let orthoSize: f32 = uniforms.zoom;
@@ -353,38 +337,26 @@
                       t += d;
                   }
 
-                  // Shading and Coloring
-                  var color = vec3<f32>(0.0, 0.0, 0.0); // Transparent background
+                  // Background color
+                  var color = vec3<f32>(0.0, 0.0, 0.0);
+                  if (uniforms.isDarkMode < 0.5) {
+                      color = vec3<f32>(0.96, 0.97, 0.98); // Light mode background
+                  }
+
                   var alpha: f32 = 0.0;
 
-                  if(t < 10.0) { // If we hit the fractal
+                  if(t < 10.0) { // Hit fractal
                       let p = ro + rd * t;
                       let n = calcNormal(p);
 
-                      // Directional lighting
-                      let lightDir = normalize(vec3<f32>(1.0, 1.0, -1.0));
+                      // Simple directional lighting
+                      let lightDir = normalize(vec3<f32>(1.0, 2.0, -2.0));
                       let diff = max(dot(n, lightDir), 0.0);
+                      let ao = clamp(1.0 - t * 0.1, 0.0, 1.0);
 
-                      // Ambient occlusion based on ray distance
-                      let ao = clamp(1.0 - t * 0.15, 0.0, 1.0);
-
-                      if (uniforms.isDarkMode > 0.5) {
-                          // Original copper/orange tone for prefers-color-scheme: dark
-                          let baseColor = vec3<f32>(0.9, 0.6, 0.3);
-                          color = baseColor * diff * ao + (baseColor * 0.2);
-                      } else {
-                          // Dark Nebula Filament Color Scheme for light mode
-                          let nebulaPrimary = vec3<f32>(0.22, 0.06, 0.38);   // Dark cosmic violet/magenta
-                          let nebulaSecondary = vec3<f32>(0.05, 0.22, 0.38); // Dark deep indigo/teal
-                          let glowAccent = vec3<f32>(0.48, 0.18, 0.68);      // Filament highlight glow
-
-                          let mixFactor = clamp(n.x * 0.5 + 0.5, 0.0, 1.0);
-                          let baseColor = mix(nebulaPrimary, nebulaSecondary, mixFactor);
-
-                          let fresnel = pow(1.0 - max(dot(-rd, n), 0.0), 2.5);
-
-                          color = baseColor * (diff * 0.7 + 0.15) * ao + glowAccent * fresnel * 0.5 * ao;
-                      }
+                      // Golden/Copper fractal color from screenshot
+                      let baseColor = vec3<f32>(0.85, 0.5, 0.15);
+                      color = baseColor * (diff * 0.6 + 0.4) * ao;
                       alpha = 1.0;
                   }
 
@@ -411,7 +383,7 @@
         },
       });
 
-      // Uniform Buffer (struct Uniforms = 6 floats -> 24 bytes, 32-byte WebGPU aligned)
+      // Uniform Buffer (32 bytes)
       const uniformBuffer = device.createBuffer({
         size: 32,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -425,30 +397,25 @@
         }]
       });
 
-      // Data array to send to the GPU (8 floats = 32 bytes)
       const uniformData = new Float32Array(8);
 
-      // --- INTERACTIVE CONTROLS (Turntable Drag Orbit & Pitch Clamping) ---
-      let targetRotX = 0.35; // Pitch (elevated 3D view looking down at build plate)
-      let targetRotY = 0.5;  // Yaw (3/4 turntable angle)
-      let targetRoll = 0;
-      let currentRotX = 0.35;
-      let currentRotY = 0.5;
-      let currentRoll = 0;
+      // --- INTERACTIVE CONTROLS ---
+      let targetDragRotX = 0.0;
+      let targetDragRotY = 0.0;
+      let currentDragRotX = 0.0;
+      let currentDragRotY = 0.0;
 
       let velX = 0;
-      let velY = 0; // No rotation without user input
+      let velY = 0;
 
-      // Initial zoom set to 3.6 so the fractal (bounding radius sqrt(3) ≈ 1.732)
-      // fits inside the viewport (half-extent 1.8) at EVERY 3D rotation angle.
-      let targetZoom = 3.6;
-      let currentZoom = 3.6;
+      let targetZoom = 3.2; // Optimized framing for the triangle/square bounds
+      let currentZoom = 3.2;
 
       let isDragging = false;
       let lastPointerX = 0;
       let lastPointerY = 0;
       let initialPinchDist = null;
-      let initialPinchZoom = 3.6;
+      let initialPinchZoom = 3.2;
 
       let isHovering = false;
       canvas.addEventListener('pointerenter', () => { isHovering = true; });
@@ -484,9 +451,8 @@
         velY = dx * sensitivity;
         velX = dy * sensitivity;
 
-        targetRotY += velY;
-        // Clamp pitch so camera doesn't flip upside-down past poles
-        targetRotX = Math.min(Math.max(targetRotX + velX, -Math.PI / 2), Math.PI / 2);
+        targetDragRotY += velY;
+        targetDragRotX = Math.min(Math.max(targetDragRotX + velX, -Math.PI / 2), Math.PI / 2);
       });
 
       const stopDrag = (e) => {
@@ -536,7 +502,6 @@
 
       // --- RENDER LOOP ---
       function render() {
-        // Handle canvas resize (accounting for Device Pixel Ratio for High-DPI / Retina displays)
         const dpr = window.devicePixelRatio || 1;
         const displayWidth = Math.floor(canvas.clientWidth * dpr);
         const displayHeight = Math.floor(canvas.clientHeight * dpr);
@@ -545,7 +510,7 @@
           canvas.height = displayHeight;
         }
 
-        // --- Scroll-based Auto Rotation ---
+        // --- Exact Geometric Interpolation Path from User Screenshots ---
         const rect = figureContainer.getBoundingClientRect();
         const absoluteTop = rect.top + window.scrollY;
         const scrollStart = absoluteTop + rect.height - window.innerHeight;
@@ -560,49 +525,38 @@
         
         const p_eased = scrollProgress * scrollProgress * (3 - 2 * scrollProgress);
 
-        const stateA_rotX = Math.PI / 2;
-        const stateA_rotY = 0;
-        const stateA_roll = 0;
+        // theta = 45 degrees (Triangle View)
+        const theta_start = Math.PI / 4; 
+        
+        // theta = 90 degrees (Square View)
+        const theta_end = Math.PI / 2;
 
-        const stateB_rotX = Math.asin(1 / Math.sqrt(3));
-        const stateB_rotY = 0; // Removed yaw spin so the tip moves straight to the corner
-        const stateB_roll = Math.PI / 4; // 45 degree roll to align the square
+        const currentTheta = theta_start + (theta_end - theta_start) * p_eased;
 
-        const autoRotX = stateA_rotX + (stateB_rotX - stateA_rotX) * p_eased;
-        const autoRotY = stateA_rotY + (stateB_rotY - stateA_rotY) * p_eased;
-        const autoRoll = stateA_roll + (stateB_roll - stateA_roll) * p_eased;
-
+        // Interactive Drag Easing
         if (!isDragging && !isHovering) {
-          targetRotX += (autoRotX - targetRotX) * 0.05;
-          let diffY = (autoRotY - targetRotY) % (Math.PI * 2);
-          if (diffY > Math.PI) diffY -= Math.PI * 2;
-          if (diffY < -Math.PI) diffY += Math.PI * 2;
-          targetRotY += diffY * 0.05;
-          targetRoll += (autoRoll - targetRoll) * 0.05;
-        }
-
-        // Momentum physics & smooth interpolation
-        if (!isDragging) {
-          targetRotY += velY;
-          targetRotX = Math.min(Math.max(targetRotX + velX, -Math.PI / 2), Math.PI / 2);
-          velY *= 0.94; // Decay velocity gradually
+          // Slowly spring back to the pure scroll interpolation view
+          targetDragRotX *= 0.95;
+          targetDragRotY *= 0.95;
+        } else if (!isDragging) {
+          targetDragRotY += velY;
+          targetDragRotX = Math.min(Math.max(targetDragRotX + velX, -Math.PI / 2), Math.PI / 2);
+          velY *= 0.94;
           velX *= 0.94;
         }
 
-        // Smooth damping (lerp) toward target values
-        currentRotX += (targetRotX - currentRotX) * 0.1;
-        currentRotY += (targetRotY - currentRotY) * 0.1;
+        currentDragRotX += (targetDragRotX - currentDragRotX) * 0.1;
+        currentDragRotY += (targetDragRotY - currentDragRotY) * 0.1;
         currentZoom += (targetZoom - currentZoom) * 0.1;
-        currentRoll += (targetRoll - currentRoll) * 0.1;
 
-        // Update uniform data
+        // Update uniform data (8 floats)
         uniformData[0] = canvas.width;
         uniformData[1] = canvas.height;
-        uniformData[2] = currentRotX;
-        uniformData[3] = currentRotY;
+        uniformData[2] = currentDragRotX;
+        uniformData[3] = currentDragRotY;
         uniformData[4] = currentZoom;
-        uniformData[5] = isDarkMode;
-        uniformData[6] = currentRoll;
+        uniformData[5] = currentTheta;
+        uniformData[6] = isDarkMode;
 
         // Write uniforms to GPU
         device.queue.writeBuffer(uniformBuffer, 0, uniformData);
@@ -623,7 +577,7 @@
         const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
         passEncoder.setPipeline(pipeline);
         passEncoder.setBindGroup(0, bindGroup);
-        passEncoder.draw(6, 1, 0, 0); // Draw 6 vertices (our quad)
+        passEncoder.draw(6, 1, 0, 0);
         passEncoder.end();
 
         device.queue.submit([commandEncoder.finish()]);
