@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <script>
     MathJax = {
       tex: {
@@ -90,17 +90,24 @@
       overflow: hidden;
     }
 
-    .figure-container:fullscreen {
+    .figure-container:fullscreen,
+    .figure-container.is-fullscreen {
+      position: fixed;
+      top: 0;
+      left: 0;
       width: 100vw;
       height: 100vh;
+      height: 100dvh;
       max-width: none;
       aspect-ratio: auto;
       border-radius: 0;
       border: none;
       background-color: #f6f8fa;
+      z-index: 99999;
     }
 
-    .figure-container:fullscreen::backdrop {
+    .figure-container:fullscreen::backdrop,
+    .figure-container.is-fullscreen::backdrop {
       background-color: #f6f8fa;
     }
 
@@ -111,7 +118,9 @@
     /* Heuristic targeting for AR / Spatial fullscreen devices */
     @media (transparent-viewport: enabled), (display-mode: xr), (display-mode: immersive) {
       .figure-container:fullscreen,
-      .figure-container:fullscreen::backdrop {
+      .figure-container.is-fullscreen,
+      .figure-container:fullscreen::backdrop,
+      .figure-container.is-fullscreen::backdrop {
         background-color: transparent;
       }
     }
@@ -124,7 +133,8 @@
       cursor: grab;
     }
 
-    .figure-container:fullscreen canvas {
+    .figure-container:fullscreen canvas,
+    .figure-container.is-fullscreen canvas {
       touch-action: none;
     }
 
@@ -142,8 +152,8 @@
 
     .button-container {
       position: absolute;
-      bottom: 12px;
-      right: 12px;
+      bottom: max(12px, env(safe-area-inset-bottom, 12px));
+      right: max(12px, env(safe-area-inset-right, 12px));
       display: flex;
       gap: 8px;
       z-index: 10;
@@ -181,7 +191,9 @@
       }
 
       .figure-container:fullscreen,
-      .figure-container:fullscreen::backdrop {
+      .figure-container.is-fullscreen,
+      .figure-container:fullscreen::backdrop,
+      .figure-container.is-fullscreen::backdrop {
         background-color: #0d1117;
       }
 
@@ -215,22 +227,49 @@
       wireframeBtn.classList.toggle('active', isWireframe);
     });
 
+    function isFS() {
+      return !!(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        figureContainer.classList.contains('is-fullscreen')
+      );
+    }
+
+    function updateFullscreenBtn() {
+      fullscreenBtn.textContent = isFS() ? 'Exit Full Screen' : 'Full Screen';
+    }
+
     fullscreenBtn.addEventListener('click', () => {
-      if (!document.fullscreenElement) {
-        figureContainer.requestFullscreen().catch(err => {
-          console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
-        });
+      if (isFS()) {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(() => {});
+        } else if (document.webkitExitFullscreen) {
+          document.webkitExitFullscreen();
+        }
+        figureContainer.classList.remove('is-fullscreen');
+        updateFullscreenBtn();
       } else {
-        document.exitFullscreen();
+        const reqFS = figureContainer.requestFullscreen || figureContainer.webkitRequestFullscreen;
+        if (reqFS) {
+          reqFS.call(figureContainer).catch(() => {
+            figureContainer.classList.add('is-fullscreen');
+            updateFullscreenBtn();
+          });
+        } else {
+          figureContainer.classList.add('is-fullscreen');
+          updateFullscreenBtn();
+        }
       }
     });
 
-    document.addEventListener('fullscreenchange', () => {
-      if (document.fullscreenElement) {
-        fullscreenBtn.textContent = 'Exit Full Screen';
-      } else {
-        fullscreenBtn.textContent = 'Full Screen';
-      }
+    ['fullscreenchange', 'webkitfullscreenchange'].forEach(evt => {
+      document.addEventListener(evt, () => {
+        const active = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        if (!active) {
+          figureContainer.classList.remove('is-fullscreen');
+        }
+        updateFullscreenBtn();
+      });
     });
 
     async function init() {
@@ -621,7 +660,7 @@
 
       canvas.addEventListener('pointerdown', (e) => {
         const isTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
-        if (isTouch && !document.fullscreenElement) {
+        if (isTouch && !isFS()) {
           return;
         }
         isDragging = true;
@@ -668,7 +707,7 @@
 
       // Touch Pinch-to-Zoom
       canvas.addEventListener('touchstart', (e) => {
-        if (!document.fullscreenElement) return;
+        if (!isFS()) return;
         if (e.touches.length === 2) {
           initialPinchDist = Math.hypot(
             e.touches[0].clientX - e.touches[1].clientX,
@@ -679,7 +718,7 @@
       });
 
       canvas.addEventListener('touchmove', (e) => {
-        if (!document.fullscreenElement) return;
+        if (!isFS()) return;
         if (e.touches.length === 2 && initialPinchDist) {
           const currentDist = Math.hypot(
             e.touches[0].clientX - e.touches[1].clientX,
