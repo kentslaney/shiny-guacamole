@@ -1,0 +1,211 @@
+    .content {
+      --max-width-em: 40;
+      max-width: calc(var(--max-width-em) * 1em);
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .conjecture {
+      text-align: center;
+    }
+
+    .figure-container {
+      position: relative;
+      width: 100%;
+      max-width: 75vh;
+      margin: 20px auto 20px auto;
+      aspect-ratio: 1 / 1;
+      background-color: #f6f8fa;
+      border-radius: 8px;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+
+    .figure-container:fullscreen,
+    .figure-container.is-fullscreen {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      width: 100vw;
+      width: 100dvw;
+      height: 100vh;
+      height: 100dvh;
+      max-width: none;
+      aspect-ratio: auto;
+      border-radius: 0;
+      border: none;
+      background-color: #f6f8fa;
+      z-index: 99999;
+      overflow: visible
+    }
+
+    .fullscreen-backdrop {
+      display: none;
+      pointer-events: none;
+    }
+
+    .figure-container:fullscreen .fullscreen-backdrop,
+    .figure-container.is-fullscreen .fullscreen-backdrop {
+      display: block;
+      position: absolute;
+      top: -200px;
+      bottom: -200px;
+      left: -200px;
+      right: -200px;
+      top: calc(-200px - env(safe-area-inset-top, 0px));
+      bottom: calc(-200px - env(safe-area-inset-bottom, 0px));
+      left: calc(-200px - env(safe-area-inset-left, 0px));
+      right: calc(-200px - env(safe-area-inset-right, 0px));
+      background-color: #f6f8fa;
+      z-index: -1;
+    }
+
+    .figure-container:fullscreen::backdrop,
+    .figure-container.is-fullscreen::backdrop {
+      background-color: #f6f8fa;
+    }
+
+    .scroll-padding {
+      height: 100vh;
+      text-align: center;
+      line-height: 5rem;
+      color: #676767
+    }
+    .scroll-padding:before {
+        content: '[extra screen height for scroll animation]';
+    }
+
+    /* Heuristic targeting for AR / Spatial fullscreen devices */
+    @media (transparent-viewport: enabled),
+    (display-mode: xr),
+    (display-mode: immersive) {
+
+      .figure-container:fullscreen,
+      .figure-container.is-fullscreen,
+      .figure-container:fullscreen::backdrop,
+      .figure-container.is-fullscreen::backdrop {
+        background-color: transparent;
+      }
+    }
+
+    .figure-container canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: auto;
+      cursor: grab;
+    }
+
+    .figure-container:fullscreen canvas,
+    .figure-container.is-fullscreen canvas {
+      touch-action: none;
+    }
+
+    .figure-container canvas:active {
+      cursor: grabbing;
+    }
+
+    #error-msg {
+      display: none;
+      color: #ff5555;
+      font-family: sans-serif;
+      text-align: center;
+      padding: 20px;
+    }
+
+    .button-container {
+      position: absolute;
+      bottom: max(24px, calc(16px + env(safe-area-inset-bottom, 0px)));
+      left: max(20px, calc(16px + env(safe-area-inset-left, 0px)));
+      right: max(20px, calc(16px + env(safe-area-inset-right, 0px)));
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 100000;
+      pointer-events: none;
+    }
+
+    .button-container > * {
+      pointer-events: auto;
+    }
+
+    #iterValue {
+      color: #ffc285;
+      font-family: sans-serif;
+      font-size: 14px;
+      min-width: 1.5em;
+      text-align: right;
+    }
+
+    #iterSlider {
+      flex: 1;
+      accent-color: rgba(230, 150, 70, 0.8);
+      cursor: pointer;
+    }
+
+    .button-container button {
+      padding: 10px 16px;
+      min-height: 44px;
+      touch-action: manipulation;
+      background: rgba(45, 30, 20, 0.85);
+      color: #ffc285;
+      border: 1px solid rgba(230, 150, 70, 0.4);
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: sans-serif;
+      font-size: 14px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: all 0.2s ease;
+    }
+
+    .button-container button:hover {
+      background: rgba(70, 45, 30, 0.95);
+      color: #ffe6cc;
+      border-color: rgba(255, 170, 90, 0.7);
+    }
+
+    .button-container button.active {
+      background: rgba(230, 150, 70, 0.8);
+      color: #2d1e14;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .figure-container {
+        background-color: #0d1117;
+        border-color: rgba(255, 255, 255, 0.15);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+      }
+
+      .figure-container:fullscreen,
+      .figure-container.is-fullscreen,
+      .figure-container:fullscreen::backdrop,
+      .figure-container.is-fullscreen::backdrop {
+        background-color: #0d1117;
+      }
+
+      .figure-container:fullscreen .fullscreen-backdrop,
+      .figure-container.is-fullscreen .fullscreen-backdrop {
+        background-color: #0d1117;
+      }
+
+      .button-container button {
+        background: rgba(45, 30, 20, 0.8);
+        color: #ffc285;
+        border: 1px solid rgba(230, 150, 70, 0.4);
+      }
+
+      .button-container button:hover {
+        background: rgba(70, 45, 30, 0.95);
+        color: #ffe6cc;
+        border-color: rgba(255, 170, 90, 0.7);
+      }
+
+      .button-container button.active {
+        background: rgba(230, 150, 70, 0.8);
+        color: #2d1e14;
+      }
+    }
