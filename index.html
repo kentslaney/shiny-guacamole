@@ -63,6 +63,8 @@
       </div>
       <canvas id="gpuCanvas"></canvas>
       <div class="button-container">
+        <span id="iterValue"></span>
+        <input type="range" id="iterSlider" min="0" max="20" step="1" />
         <button id="wireframeBtn">Wireframe</button>
         <button id="fullscreenBtn">Full Screen</button>
       </div>
@@ -192,10 +194,31 @@
     .button-container {
       position: absolute;
       bottom: max(24px, calc(16px + env(safe-area-inset-bottom, 0px)));
+      left: max(20px, calc(16px + env(safe-area-inset-left, 0px)));
       right: max(20px, calc(16px + env(safe-area-inset-right, 0px)));
       display: flex;
+      align-items: center;
       gap: 10px;
       z-index: 100000;
+      pointer-events: none;
+    }
+
+    .button-container > * {
+      pointer-events: auto;
+    }
+
+    #iterValue {
+      color: #ffc285;
+      font-family: sans-serif;
+      font-size: 14px;
+      min-width: 1.5em;
+      text-align: right;
+    }
+
+    #iterSlider {
+      flex: 1;
+      accent-color: rgba(230, 150, 70, 0.8);
+      cursor: pointer;
     }
 
     .button-container button {
@@ -267,6 +290,8 @@
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     const wireframeBtn = document.getElementById('wireframeBtn');
     const figureContainer = document.getElementById('figureContainer');
+    const iterValue = document.getElementById('iterValue');
+    const iterSlider = document.getElementById('iterSlider');
 
     let isWireframe = false;
     wireframeBtn.addEventListener('click', () => {
@@ -349,10 +374,31 @@
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (isTouchDevice && Math.min(window.screen.width, window.screen.height) < 1024);
 
       // Performance & Fractal Configs
-      const fractalIterations = isMobile ? 8 : 12;
-      const wireframeDepth = isMobile ? 4 : 6;
+      let fractalIterations = isMobile ? 8 : 12;
+      let wireframeDepth = isMobile ? 4 : 6;
       const maxRaySteps = isMobile ? 80 : 160;
       const maxDPR = isMobile ? 1.5 : 2.0;
+
+      iterSlider.value = fractalIterations;
+      iterValue.textContent = fractalIterations;
+
+      iterSlider.addEventListener('input', (e) => {
+        fractalIterations = parseInt(e.target.value);
+        iterValue.textContent = fractalIterations;
+        
+        // Update wireframe buffer
+        wireframeDepth = Math.min(fractalIterations, 7); // Cap wireframe depth
+        linesData.length = 0;
+        genSierpinski(p0, p1, p2, p3, wireframeDepth);
+        if (vertexBuffer) {
+          vertexBuffer.destroy();
+        }
+        vertexBuffer = device.createBuffer({
+          size: linesData.length * 4,
+          usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        });
+        device.queue.writeBuffer(vertexBuffer, 0, new Float32Array(linesData));
+      });
 
       // Rendering & Interaction Configs
       let wireframeLineWidth = 2.0; // Doubled wireframe line width variable (default 1.0 -> 2.0)
@@ -367,6 +413,9 @@
                   theta: f32,
                   isDarkMode: f32,
                   lineWidth: f32,
+                  iterations: f32,
+                  pad1: f32,
+                  pad2: vec2<f32>,
               }
 
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -406,6 +455,30 @@
                   );
               }
 
+              fn dot2(v: vec3<f32>) -> f32 {
+                  return dot(v, v);
+              }
+
+              fn udTriangle(p: vec3<f32>, a: vec3<f32>, b: vec3<f32>, c: vec3<f32>) -> f32 {
+                  let ba = b - a; let pa = p - a;
+                  let cb = c - b; let pb = p - b;
+                  let ac = a - c; let pc = p - c;
+                  let nor = cross(ba, ac);
+
+                  let signa = sign(dot(cross(ba, nor), pa));
+                  let signb = sign(dot(cross(cb, nor), pb));
+                  let signc = sign(dot(cross(ac, nor), pc));
+
+                  if (signa + signb + signc < 2.0) {
+                      let d1 = ba * clamp(dot(ba, pa) / dot2(ba), 0.0, 1.0) - pa;
+                      let d2 = cb * clamp(dot(cb, pb) / dot2(cb), 0.0, 1.0) - pb;
+                      let d3 = ac * clamp(dot(ac, pc) / dot2(ac), 0.0, 1.0) - pc;
+                      return sqrt(min(min(dot2(d1), dot2(d2)), dot2(d3)));
+                  } else {
+                      return abs(dot(nor, pa)) / sqrt(dot2(nor));
+                  }
+              }
+
               // Sierpinski Tetrahedron Distance Estimator
               fn sdSierpinski(p_in: vec3<f32>) -> f32 {
                   var p_cam = p_in;
@@ -428,7 +501,7 @@
                   var scale: f32 = 1.0;
 
                   // Fold space dynamically based on device performance
-                  for (var i = 0; i < ${fractalIterations}; i++) {
+                  for (var i = 0u; i < u32(uniforms.iterations); i++) {
                       if (p.x + p.y < 0.0) { let temp = -p.y; p.y = -p.x; p.x = temp; }
                       if (p.x + p.z < 0.0) { let temp = -p.z; p.z = -p.x; p.x = temp; }
                       if (p.y + p.z < 0.0) { let temp = -p.z; p.z = -p.y; p.y = temp; }
@@ -436,8 +509,13 @@
                       scale *= 2.0;
                   }
 
-                  // 1.0 / sqrt(3.0) ≈ 0.57735027 gives exact plane distance
-                  return (p.x + p.y + p.z - 1.0) * 0.57735027 / scale;
+                  // Exact analytical distance to the pre-fractal bounds
+                  let vA = vec3<f32>(-1.0, 1.0, 1.0);
+                  let vB = vec3<f32>( 1.0,-1.0, 1.0);
+                  let vC = vec3<f32>( 1.0, 1.0,-1.0);
+                  
+                  let d = udTriangle(p, vA, vB, vC);
+                  return sign(p.x + p.y + p.z - 1.0) * d / scale;
               }
 
               // Calculate normals for lighting based on SDF gradient
@@ -515,9 +593,9 @@
         },
       });
 
-      // Uniform Buffer (32 bytes)
+      // Uniform Buffer (48 bytes)
       const uniformBuffer = device.createBuffer({
-        size: 32,
+        size: 48,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
 
@@ -538,6 +616,9 @@
                   theta: f32,
                   isDarkMode: f32,
                   lineWidth: f32,
+                  iterations: f32,
+                  pad1: f32,
+                  pad2: vec2<f32>,
               }
               @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 
@@ -672,7 +753,7 @@
       const p3 = [-1, 1, -1];
       genSierpinski(p0, p1, p2, p3, wireframeDepth);
 
-      const vertexBuffer = device.createBuffer({
+      let vertexBuffer = device.createBuffer({
         size: linesData.length * 4,
         usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
       });
@@ -686,7 +767,7 @@
         }]
       });
 
-      const uniformData = new Float32Array(8);
+      const uniformData = new Float32Array(12);
 
       // --- INTERACTIVE STATE ---
       let targetDragRotX = 0.0;
@@ -710,6 +791,7 @@
       let hasBeenDragged = false;
       let lockedTheta = Math.PI / 4;
       let currentTheta = Math.PI / 4;
+      let lastScrollTheta = Math.PI / 4;
 
       figureContainer.addEventListener('pointerenter', () => {
         isHovering = true;
@@ -845,6 +927,12 @@
         const theta_end = Math.PI / 2;
 
         const scrollTheta = theta_start + (theta_end - theta_start) * p_eased;
+        
+        if (Math.abs(scrollTheta - lastScrollTheta) > 0.0001) {
+          hasBeenDragged = false;
+        }
+        lastScrollTheta = scrollTheta;
+
         let targetTheta = scrollTheta;
         if (hasBeenDragged && (isHovering || isFS())) {
           targetTheta = lockedTheta;
@@ -953,7 +1041,7 @@
           }
         }
 
-        // Update uniform data (8 floats)
+        // Update uniform data (12 floats)
         uniformData[0] = canvas.width;
         uniformData[1] = canvas.height;
         uniformData[2] = currentDragRotX;
@@ -962,6 +1050,7 @@
         uniformData[5] = currentTheta;
         uniformData[6] = isDarkMode;
         uniformData[7] = wireframeLineWidth;
+        uniformData[8] = fractalIterations;
 
         // Write uniforms to GPU
         device.queue.writeBuffer(uniformBuffer, 0, uniformData);
