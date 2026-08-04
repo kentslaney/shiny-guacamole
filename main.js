@@ -82,7 +82,7 @@ async function init() {
   const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (isTouchDevice && Math.min(window.screen.width, window.screen.height) < 1024);
 
-  let fractalIterations = isMobile ? 6 : 7;
+  let fractalIterations = 3;
   const maxDPR = isMobile ? 1.5 : 2.0;
 
   iterSlider.value = fractalIterations;
@@ -172,17 +172,17 @@ async function init() {
     @fragment
     fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let n = normalize(in.normal);
-        let lightDir = normalize(vec3<f32>(1.0, 2.0, -2.0));
-        let viewDir = vec3<f32>(0.0, 0.0, 1.0);
+        let lightDir = normalize(vec3<f32>(0.5, 0.8, -1.0));
         
-        var finalN = n;
-        if (dot(n, viewDir) < 0.0) {
-            finalN = -n;
+        // Calculate shading factor directly based on face normal angle to light
+        let angleFactor = dot(n, lightDir) * 0.4 + 0.6;
+
+        var baseColor = vec3<f32>(0.85, 0.5, 0.15);
+        if (uniforms.isDarkMode < 0.5) {
+            baseColor = vec3<f32>(0.2, 0.45, 0.85);
         }
 
-        let diff = max(dot(finalN, lightDir), 0.0);
-        let baseColor = vec3<f32>(0.85, 0.5, 0.15);
-        let color = baseColor * (diff * 0.6 + 0.4);
+        let color = baseColor * clamp(angleFactor, 0.2, 1.0);
 
         return vec4<f32>(color, 1.0);
     }
@@ -384,7 +384,7 @@ async function init() {
     const p1 = [-1, -1, 1];
     const p2 = [1, -1, -1];
     const p3 = [-1, 1, -1];
-    
+
     genSierpinskiMesh(p0, p1, p2, p3, solidDepth);
     genSierpinskiLines(p0, p1, p2, p3, wireframeDepth);
 
@@ -572,7 +572,7 @@ async function init() {
     const theta_start = Math.PI / 4;
     const theta_end = Math.PI / 2;
     const scrollTheta = theta_start + (theta_end - theta_start) * p_eased;
-    
+
     if (Math.abs(scrollTheta - lastScrollTheta) > 0.0001) {
       hasBeenDragged = false;
     }
@@ -697,7 +697,7 @@ async function init() {
     };
 
     const passEncoder = commandEncoder.beginRenderPass(renderPassDescriptor);
-    
+
     if (isWireframe) {
       passEncoder.setPipeline(wireframePipeline);
       passEncoder.setBindGroup(0, wireframeBindGroup);
